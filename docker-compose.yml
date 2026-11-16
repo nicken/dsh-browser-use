@@ -31,4 +31,5 @@ services:
       TZ: Asia/Shanghai
       # 驱动工具（navigate/click/...）：单 MCP 模式下保持开启
       MCP_DRIVER_TOOLS: "1"
+      ARTIFACTS_KEEP: "20"        # 归档保留份数，超出删最旧
       # MCP_TOKEN: "change-me"   # 打开后 MCP 与 /api 需要 Bearer

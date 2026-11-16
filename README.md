@@ -207,7 +207,7 @@ npx playwright show-trace ./data/artifacts/<session-id>/trace.zip
 # 或把 trace.zip 拖到 https://trace.playwright.dev
 ```
 
-保留 `ARTIFACTS_KEEP=50` 份，超出删最旧；`RECORD_VIDEO=0` / `RECORD_TRACE=0` 可关。
+保留 `ARTIFACTS_KEEP` 份（compose 里是 **20**，代码默认 50），每次关闭归档时按修改时间裁掉最旧的；`RECORD_VIDEO=0` / `RECORD_TRACE=0` 可关。
 trace 含页面 DOM 快照，可能有敏感信息。
 
 ---
@@ -224,7 +224,7 @@ trace 含页面 DOM 快照，可能有敏感信息。
 | `VIEWPORT_W` / `VIEWPORT_H` | `1440` / `900` | 虚拟屏幕尺寸 |
 | `DISPLAY_BASE` / `VNC_PORT_BASE` / `VIEW_PORT_BASE` / `CDP_PORT_BASE` | `101` / `5901` / `6081` / `9223` | 槽位端口基数 |
 | `RECORD_VIDEO` / `RECORD_TRACE` | `1` / `1` | 是否录制 |
-| `ARTIFACTS_KEEP` | `50` | 归档保留份数 |
+| `ARTIFACTS_KEEP` | `20` | 归档保留份数（compose 设置；代码默认 50） |
 | `MCP_TOKEN` | 空 | 设置后 MCP 与 `/api` 需要 Bearer |
 | `VNC_ENABLED` / `VNC_LISTEN_HOST` | `1` / `127.0.0.1` | 实时画面开关与监听地址 |
 | `INSTANCE_NAME` | `instance-1` | 实例名（看板与 healthz 显示） |
