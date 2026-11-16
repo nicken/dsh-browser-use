@@ -1,0 +1,34 @@
+services:
+  browser-pods:
+    build:
+      context: .
+    image: browser-pods:0.1.0
+    container_name: browser-pods
+    # host 网络：noVNC / MCP 直接走本机端口，不需要端口映射
+    network_mode: host
+    restart: unless-stopped
+    # 以宿主机当前用户运行，profile 文件不会变成 root 所有
+    user: "1000:1000"
+    shm_size: "1gb"
+    cpus: 6
+    mem_limit: 12g
+    pids_limit: 1024
+    volumes:
+      - ./data:/data
+    environment:
+      LISTEN_HOST: 127.0.0.1      # 控制面只监听本机；要局域网访问改成 0.0.0.0 并设 MCP_TOKEN
+      LISTEN_PORT: "8787"
+      PUBLIC_HOST: 127.0.0.1      # 生成 noVNC 链接用的主机名，远程看时改成机器局域网 IP
+      PODS_MAX: "6"
+      POD_IDLE_TTL_MIN: "60"  # 空闲回收（防孤儿），0 = 关闭
+      VIEWPORT_W: "1440"
+      VIEWPORT_H: "900"
+      DISPLAY_BASE: "101"
+      VNC_PORT_BASE: "5901"
+      VIEW_PORT_BASE: "6081"
+      CDP_PORT_BASE: "9223"
+      INSTANCE_NAME: "instance-1"
+      TZ: Asia/Shanghai
+      # 驱动工具（navigate/click/...）：单 MCP 模式下保持开启
+      MCP_DRIVER_TOOLS: "1"
+      # MCP_TOKEN: "change-me"   # 打开后 MCP 与 /api 需要 Bearer

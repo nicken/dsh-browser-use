@@ -1,0 +1,16 @@
+{
+  "name": "browser-pods",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "多租户浏览器沙箱：每个会话独立 Xvfb + Chromium + noVNC，对 agent 暴露 MCP 工具",
+  "scripts": {
+    "start": "node src/server.mjs",
+    "smoke": "node scripts/smoke.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "playwright": "1.62.1",
+    "zod": "^4.6.7"
+  }
+}
