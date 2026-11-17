@@ -55,19 +55,26 @@ async function run(pod, fn) {
 }
 
 export function buildMcpServer() {
-  // 驱动类工具（navigate/click/... 共 11 个）默认不注册：页面操作交给 chrome-devtools MCP。
-  // 需要恢复时设 MCP_DRIVER_TOOLS=1。
+  // 单 MCP 模式：compose 里 MCP_DRIVER_TOOLS=1，供应 + 驱动共 16 个工具。
+  // 设 MCP_DRIVER_TOOLS=0 可退回纯供应（5 个），页面操作交给外部驱动 MCP。
   const driverTools = P.config.driverTools;
+  const instructions = driverTools
+    ? '浏览器供应 + 页面驱动：每个会话是一套隔离的 Xvfb + Chromium，带 noVNC 实时画面、录像与 trace 归档。' +
+      '固定流程：browser_open 拿 session_id（同时返回 live_view_url 与 cdp_url）→ ' +
+      '用本服务的 browser_navigate / browser_snapshot / browser_click / browser_type / browser_press / ' +
+      'browser_eval / browser_wait / browser_text / browser_screenshot / browser_console / browser_network 操作页面 → ' +
+      'browser_close 归档。browser_list 可随时查看所有会话；' +
+      '空闲超过 POD_IDLE_TTL_MIN 分钟会自动回收（正在操作的浏览器不受影响）。' +
+      '需要性能 trace / Lighthouse / 堆快照时才临时用 chrome-devtools CLI 连返回的 cdp_url；' +
+      'CDP 端口按槽位递增（9223/9224/…），不要为此常驻 chrome-devtools MCP。'
+    : '浏览器供应与会话层：负责开/关浏览器、实时画面、录像与归档，**不负责页面操作**。' +
+      '固定流程：browser_open 申请浏览器（返回 session_id、cdp_url、实时画面）→ ' +
+      '用外部驱动 MCP（chrome-devtools 等）连该会话的 cdp_url 操作页面 → browser_close 归档。' +
+      'CDP 端口按槽位递增（9223/9224/…），外部驱动需按 cdp_url 逐个连接，不要写死 9223。' +
+      '空闲超过 POD_IDLE_TTL_MIN 分钟会自动回收（防孤儿），正在操作的浏览器不受影响。';
   const server = new McpServer(
     { name: 'browser-pods', version: '0.1.0' },
-    {
-      instructions:
-        '浏览器供应与会话层：负责开/关浏览器、实时画面、录像与归档，**不负责页面操作**。' +
-        '做浏览器测试的固定流程：browser_open 申请一个浏览器（返回 session_id、cdp_url、实时画面）→ ' +
-        '用 chrome-devtools 那组工具（mcp__chrome__*）操作页面 → 完事 browser_close 归档。' +
-        'chrome-devtools 固定连 9223，也就是第一个会话（slot 1）；并发多个浏览器时需要对应槽位的 chrome 实例。' +
-        '空闲超过 POD_IDLE_TTL_MIN 分钟会自动回收（防孤儿），正在操作的浏览器不受影响。',
-    },
+    { instructions },
   );
 
   server.registerTool(
