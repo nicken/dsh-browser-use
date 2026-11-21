@@ -30,6 +30,16 @@ function normalizeUrl(input) {
   return `https://${u}`;
 }
 
+/** 导航失败若来自证书校验，给出可操作提示（是否显式忽略由调用方决定） */
+function certificateHint(err, pod, target) {
+  const message = String(err?.message || err);
+  if (!/ERR_CERT|certificate|CERT_/i.test(message)) return err;
+  const hint = pod.ignoreCertErrors
+    ? '该会话已开启 ignore_cert_errors，仍失败通常是证书链不完整或中间代理拦截，请检查站点证书或代理配置。'
+    : '如果确认这是你信任的自签/内网站点，用 browser_open 新建会话时传 ignore_cert_errors: true 再试；不要对公网未知站点这样做。';
+  return new Error(`访问 ${target} 时证书校验失败：${message.slice(0, 300)} ${hint}`);
+}
+
 function resolveLocator(page, { selector, role, name, text, index }) {
   let loc;
   if (selector) loc = page.locator(selector);
@@ -66,7 +76,9 @@ export function buildMcpServer() {
       'browser_close 归档。browser_list 可随时查看所有会话；' +
       '空闲超过 POD_IDLE_TTL_MIN 分钟会自动回收（正在操作的浏览器不受影响）。' +
       '需要性能 trace / Lighthouse / 堆快照时才临时用 chrome-devtools CLI 连返回的 cdp_url；' +
-      'CDP 端口按槽位递增（9223/9224/…），不要为此常驻 chrome-devtools MCP。'
+      'CDP 端口按槽位递增（9223/9224/…），不要为此常驻 chrome-devtools MCP。' +
+      '默认校验 TLS 证书；自签/内网 HTTPS 站点可在 browser_open 时传 ignore_cert_errors: true 显式跳过（只对信任的目标使用），' +
+      '导航遇证书错误时会返回可操作提示。'
     : '浏览器供应与会话层：负责开/关浏览器、实时画面、录像与归档，**不负责页面操作**。' +
       '固定流程：browser_open 申请浏览器（返回 session_id、cdp_url、实时画面）→ ' +
       '用外部驱动 MCP（chrome-devtools 等）连该会话的 cdp_url 操作页面 → browser_close 归档。' +
@@ -90,10 +102,17 @@ export function buildMcpServer() {
         profile: z.string().optional().describe('复用命名 profile（保留登录态）；同一个 profile 同时只能被一个浏览器占用'),
         ttl_minutes: z.number().optional().describe('可选：空闲回收分钟数，默认取服务端配置'),
         cdp_url: z.string().optional().describe('可选：连接外部已开调试端口的 Chrome，例如 http://127.0.0.1:9222'),
+        ignore_cert_errors: z
+          .boolean()
+          .optional()
+          .describe(
+            '可选：显式忽略 TLS 证书错误（自签/内网 HTTPS 站点）。默认 false，仍做正常证书校验；' +
+              '开启后该会话内所有页面都不再校验证书，只对确认信任的目标使用',
+          ),
       },
     },
-    guard(async ({ label, owner, profile, ttl_minutes, cdp_url }) => {
-      const pod = await P.openBrowser({ label, owner, profileKey: profile, ttlMinutes: ttl_minutes, cdpUrl: cdp_url });
+    guard(async ({ label, owner, profile, ttl_minutes, cdp_url, ignore_cert_errors }) => {
+      const pod = await P.openBrowser({ label, owner, profileKey: profile, ttlMinutes: ttl_minutes, cdpUrl: cdp_url, ignoreCertErrors: ignore_cert_errors });
       const info = await P.describePod(pod);
       return ok({
         session_id: pod.id,
@@ -144,10 +163,15 @@ export function buildMcpServer() {
       const { pod, page } = await pageOf(session_id);
       const target = normalizeUrl(url);
       return run(pod, async () => {
-        const res = await page.goto(target, {
-          waitUntil: wait_until || 'domcontentloaded',
-          timeout: timeout_ms || 45_000,
-        });
+        let res;
+        try {
+          res = await page.goto(target, {
+            waitUntil: wait_until || 'domcontentloaded',
+            timeout: timeout_ms || 45_000,
+          });
+        } catch (err) {
+          throw certificateHint(err, pod, target);
+        }
         P.recordEvent(pod, 'goto', target);
         return ok({
           url: page.url(),

@@ -28,6 +28,8 @@ export const config = {
   vncEnabled: env('VNC_ENABLED', '1') === '1',
   vncListenHost: env('VNC_LISTEN_HOST', '127.0.0.1'),
   browserChannel: env('BROWSER_CHANNEL', ''),
+  // 显式忽略 TLS 证书错误（自签/内网 HTTPS 站点）。默认关闭；也可在 browser_open 里按会话开启
+  ignoreCertErrors: env('IGNORE_CERT_ERRORS', '0') === '1',
   // 驱动工具开关：0 = 只做“供应/会话/观测”，页面操作交给 chrome-devtools 之类的驱动 MCP
   driverTools: env('MCP_DRIVER_TOOLS', '0') === '1',
   recordVideo: env('RECORD_VIDEO', '1') === '1',
@@ -211,7 +213,7 @@ export function getPod(id) {
   return pod;
 }
 
-export async function createPod({ label = null, owner = null, profileKey = null, ttlMinutes = null } = {}) {
+export async function createPod({ label = null, owner = null, profileKey = null, ttlMinutes = null, ignoreCertErrors = null } = {}) {
   if (closing) throw new Error('服务正在关闭');
   if (pods.size >= config.maxPods) {
     throw new Error(`并发浏览器已达上限 ${config.maxPods}。先 browserctl stop / gc 收掉不用的，或调大 PODS_MAX。`);
@@ -262,6 +264,8 @@ export async function createPod({ label = null, owner = null, profileKey = null,
     stats: { ops: 0, screenshots: 0 },
     managed: true,
     external: false,
+    // 显式忽略 TLS 证书校验：默认取服务端配置，browser_open 可按会话覆盖
+    ignoreCertErrors: ignoreCertErrors == null ? config.ignoreCertErrors : ignoreCertErrors === true,
     attached: false,
     cdpUrl: null,
     artifactsDir: path.join(config.dataDir, 'artifacts', id),
@@ -352,6 +356,8 @@ export async function createPod({ label = null, owner = null, profileKey = null,
       timezoneId: config.tz,
       acceptDownloads: true,
       downloadsPath: path.join(dir, 'downloads'),
+      // 显式开启时才跳过 TLS 校验；默认仍按正常证书链校验（安全优先）
+      ignoreHTTPSErrors: pod.ignoreCertErrors === true,
       ...(config.recordVideo
         ? { recordVideo: { dir: path.join(pod.artifactsDir, 'video'), size: { width: config.viewportW, height: config.viewportH } } }
         : {}),
@@ -374,6 +380,8 @@ export async function createPod({ label = null, owner = null, profileKey = null,
         '--use-angle=swiftshader',
         `--remote-debugging-port=${pod.cdpPort}`,
         '--remote-allow-origins=*',
+        // 仅在显式开启时跳过证书校验；--ignore-certificate-errors 同时覆盖子资源/WS
+        ...(pod.ignoreCertErrors ? ['--ignore-certificate-errors'] : []),
         // 容器里以 root 运行时 Chromium 必须关闭沙箱（外层已有容器隔离兜底）
         ...(process.getuid?.() === 0 ? ['--no-sandbox', '--disable-setuid-sandbox'] : []),
       ],
@@ -533,9 +541,9 @@ async function finalizeArtifacts(pod, reason) {
  * 一站式打开：没给 cdp_url 就新建一个浏览器盒子并连上；给了就只连接外部浏览器。
  * 这是 MCP 生命周期工具的入口。
  */
-export async function openBrowser({ label = null, owner = null, profileKey = null, ttlMinutes = null, cdpUrl = null } = {}) {
+export async function openBrowser({ label = null, owner = null, profileKey = null, ttlMinutes = null, cdpUrl = null, ignoreCertErrors = null } = {}) {
   if (cdpUrl) return attachExternal({ cdpUrl, label, owner });
-  const pod = await createPod({ label, owner, profileKey, ttlMinutes });
+  const pod = await createPod({ label, owner, profileKey, ttlMinutes, ignoreCertErrors });
   pod.attached = true;
   recordEvent(pod, 'attach', 'MCP 已连接');
   return pod;
@@ -596,6 +604,8 @@ export async function attachExternal({ cdpUrl, label = null, owner = null }) {
     cdpUrl,
     external: true,
     managed: false,
+    // 外部浏览器的证书策略由对方进程决定，这里只做展示
+    ignoreCertErrors: false,
     attached: true,
     state: 'starting',
     createdAt: Date.now(),
@@ -764,6 +774,7 @@ export async function describePod(pod, { withEvents = 6 } = {}) {
     cdp_url: pod.external ? pod.cdpUrl : `http://127.0.0.1:${pod.cdpPort}`,
     mode: pod.external ? 'external' : 'managed',
     attached: !!pod.attached,
+    ignore_cert_errors: pod.ignoreCertErrors === true,
     dashboard_url: `http://${config.publicHost}:${Number(env('LISTEN_PORT', '8787'))}/`,
     profile: pod.profileKey || `slot-${pod.slot}`,
     stats: pod.stats,

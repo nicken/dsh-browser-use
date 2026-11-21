@@ -141,6 +141,7 @@ claude mcp add --transport http browser-pods http://127.0.0.1:8787/mcp
 
 ```
 browser_open({ label: "订单页回归", owner: "qa-agent" })      # → session_id / 实时画面 / CDP
+browser_open({ ignore_cert_errors: true, label: "内网自签站点" })  # 显式跳过 TLS 校验（默认仍校验）
 browser_navigate({ session_id, url: "https://example.com/orders" })
 browser_snapshot({ session_id })                              # 看结构
 browser_click({ session_id, role: "button", name: "筛选" })
@@ -223,6 +224,7 @@ trace 含页面 DOM 快照，可能有敏感信息。
 | `PODS_MAX` | `6` | 最大并发会话 |
 | `POD_IDLE_TTL_MIN` | `60` | 空闲回收分钟数，0 = 不回收 |
 | `MCP_DRIVER_TOOLS` | `1` | 1 = 含驱动工具（16 个）；0 = 只供应（5 个） |
+| `IGNORE_CERT_ERRORS` | `0` | 1 = 新建会话默认跳过 TLS 证书校验（自签/内网站点）；单次会话可用 `browser_open({ ignore_cert_errors })` 覆盖 |
 | `VIEWPORT_W` / `VIEWPORT_H` | `1440` / `900` | 虚拟屏幕尺寸 |
 | `DISPLAY_BASE` / `VNC_PORT_BASE` / `VIEW_PORT_BASE` / `CDP_PORT_BASE` | `101` / `5901` / `6081` / `9223` | 槽位端口基数 |
 | `RECORD_VIDEO` / `RECORD_TRACE` | `1` / `1` | 是否录制 |
@@ -240,6 +242,7 @@ trace 含页面 DOM 快照，可能有敏感信息。
 - 默认只监听 `127.0.0.1`：控制面、noVNC、x11vnc 全部只在本机可达；
 - 要给局域网看：`LISTEN_HOST=0.0.0.0`、`VNC_LISTEN_HOST=0.0.0.0`、`PUBLIC_HOST=<机器 IP>`，并**务必**设 `MCP_TOKEN`；
 - 容器以宿主 uid 运行，`data/` 下的 profile 不会变成 root 所有。
+- **TLS 证书默认校验**：自签/内网站点会被拦下。确认信任时用 `browser_open({ ignore_cert_errors: true })` 或服务端 `IGNORE_CERT_ERRORS=1` 显式跳过；跳过只影响该会话的浏览器进程，期间不防中间人，**不要对公网未知站点开启**。证书错误会返回可操作提示，不会静默失败。
 
 ---
 
@@ -252,6 +255,7 @@ trace 含页面 DOM 快照，可能有敏感信息。
 | Playwright 报 `chromium-1234` 不存在 | 版本错配。容器里由 `npx playwright install chromium` 固定；宿主机调试用 `BROWSER_CHANNEL=chrome` |
 | `docker build` 报 DNS `no such host` | 本机 daemon 解析问题；构建时加 `--network=host`，或不依赖 registry |
 | 工具都列出来但调用失败 | 容器没跑：`cd browser-pods && docker compose up -d` |
+| 自签/内网 HTTPS 报 `ERR_CERT_AUTHORITY_INVALID` | 默认校验证书。确认信任后 `browser_open({ ignore_cert_errors: true })` 重开一个会话（已开的会话不会变更） |
 | toolbox 里改了配置不生效 | 保存会触发重载；仍不行就重启 `dsh web` |
 | noVNC 打开黑屏 | 会话已关或 Chromium 挂了；看板状态会显示 `closed` / `error` |
 | 看板缩略图不刷新 | 会话未就绪或页面在加载；点「刷新截图」 |
