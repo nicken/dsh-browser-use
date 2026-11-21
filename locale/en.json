@@ -1,0 +1,20 @@
+{
+  "meta": {
+    "title": "Browser Control",
+    "description": "Per-session real-browser open, observe, act and query reads over CDP (off by default)."
+  },
+  "labels": {
+    "view": "Browser",
+    "chip": "Browser",
+    "statusOffline": "Browser status unavailable",
+    "capabilitySwitch": "Browser control switch",
+    "capabilityOff": "Browser control is off for this conversation",
+    "capabilityOn": "Browser control is on",
+    "capabilityEnable": "Turn browser control on",
+    "capabilityDisable": "Turn browser control off",
+    "capabilityHint": "Off by default; browser tools apply the change on the next step.",
+    "capabilityPending": "Saved — applies on the next step",
+    "capabilityFailed": "Could not save the switch",
+    "capabilityLoading": "Reading the switch state…"
+  }
+}

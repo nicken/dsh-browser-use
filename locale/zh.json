@@ -1,0 +1,20 @@
+{
+  "meta": {
+    "title": "浏览器控制",
+    "description": "按会话提供真实浏览器的打开、观察、操作与查询式读取（CDP 直连，默认关闭）。"
+  },
+  "labels": {
+    "view": "浏览器",
+    "chip": "浏览器",
+    "statusOffline": "浏览器状态不可用",
+    "capabilitySwitch": "浏览器控制开关",
+    "capabilityOff": "本会话未开启浏览器控制",
+    "capabilityOn": "浏览器控制已开启",
+    "capabilityEnable": "开启浏览器控制",
+    "capabilityDisable": "关闭浏览器控制",
+    "capabilityHint": "默认关闭；开启后浏览器工具在下一步生效。",
+    "capabilityPending": "已保存，下一步生效",
+    "capabilityFailed": "开关保存失败",
+    "capabilityLoading": "正在读取开关状态…"
+  }
+}
