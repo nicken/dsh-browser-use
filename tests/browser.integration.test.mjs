@@ -232,3 +232,163 @@ test('attach：browser_open({cdp_url}) 接管外部 Chromium，关闭只 detach'
     await new Promise((resolve) => server.close(resolve));
   }
 });
+
+
+/** 假 browser-pods 控制面：POST /api/pods 返回给定 cdp_url，DELETE 记录调用。 */
+function startFakePodControl({ cdpUrl }) {
+  const calls = { created: 0, deleted: 0, lastDeleteReason: '' };
+  const server = createServer((req, res) => {
+    if (req.method === 'POST' && req.url === '/api/pods') {
+      calls.created += 1;
+      res.writeHead(201, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ id: 'pod-test-1', cdp_url: cdpUrl, live_view_url: '', mode: 'managed' }));
+      return;
+    }
+    if (req.method === 'DELETE' && req.url.startsWith('/api/pods/')) {
+      calls.deleted += 1;
+      calls.lastDeleteReason = decodeURIComponent(new URL(req.url, 'http://x').searchParams.get('reason') || '');
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ id: 'pod-test-1', closed: true }));
+      return;
+    }
+    res.writeHead(404).end();
+  });
+  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({ server, calls })));
+}
+
+test('pod 引擎：复用已有实例（不重复建 pod），关闭时 DELETE 归档', async (t) => {
+  const chromium = await (async () => {
+    try {
+      const mod = await import('playwright');
+      return mod.chromium;
+    } catch {
+      return null;
+    }
+  })();
+  const executable = process.env.DSH_BROWSER_PATH || (chromium ? chromium.executablePath() : '');
+  if (!executable || !existsSync(executable)) return t.skip('no browser executable');
+  delete process.env.DSH_BROWSER_ENGINE;
+  delete process.env.DSH_BROWSER_POD_URL;
+  delete process.env.DSH_BROWSER_POD_TOKEN;
+
+  const pages = await startServer();
+  const external = await startExternalChromium(executable);
+  const fake = await startFakePodControl({ cdpUrl: `http://127.0.0.1:${external.port}` });
+  const base = `http://127.0.0.1:${pages.address().port}`;
+  const h = await createHarness();
+  const saved = { ...process.env };
+  try {
+    process.env.DSH_BROWSER_ENGINE = 'pod';
+    process.env.DSH_BROWSER_POD_URL = `http://127.0.0.1:${fake.server.address().port}`;
+    process.env.DSH_BROWSER_PATH = executable;
+
+    const first = await h.call('browser', { action: 'open', url: `${base}/` });
+    assert.equal(first.ok, true, JSON.stringify(first));
+    assert.equal(first.mode, 'pod');
+    assert.equal(first.pod?.id, 'pod-test-1');
+    assert.equal(fake.calls.created, 1);
+
+    const second = await h.call('browser', { action: 'open', url: `${base}/page2` });
+    assert.equal(second.ok, true, JSON.stringify(second));
+    assert.equal(fake.calls.created, 1, 'repeated open must reuse the existing pod');
+
+    const status = await h.call('browser', { action: 'session', op: 'status' });
+    assert.equal(status.mode, 'attached');
+    assert.equal(status.pod?.id, 'pod-test-1');
+
+    const closed = await h.call('browser', { action: 'session', op: 'close' });
+    assert.equal(closed.ok, true);
+    assert.equal(fake.calls.deleted, 1, 'closing the session must DELETE the pod');
+    assert.equal(external.child.exitCode, null, 'detach must not kill the pod browser');
+  } finally {
+    process.env = saved;
+    h.cleanup();
+    external.cleanup();
+    await new Promise((resolve) => fake.server.close(resolve));
+    await new Promise((resolve) => pages.close(resolve));
+  }
+});
+
+test('pod 引擎：KEEP=1 时关闭只 detach，不删 pod', async (t) => {
+  const chromium = await (async () => {
+    try {
+      const mod = await import('playwright');
+      return mod.chromium;
+    } catch {
+      return null;
+    }
+  })();
+  const executable = process.env.DSH_BROWSER_PATH || (chromium ? chromium.executablePath() : '');
+  if (!executable || !existsSync(executable)) return t.skip('no browser executable');
+
+  const pages = await startServer();
+  const external = await startExternalChromium(executable);
+  const fake = await startFakePodControl({ cdpUrl: `http://127.0.0.1:${external.port}` });
+  const base = `http://127.0.0.1:${pages.address().port}`;
+  const h = await createHarness();
+  const saved = { ...process.env };
+  try {
+    process.env.DSH_BROWSER_ENGINE = 'pod';
+    process.env.DSH_BROWSER_POD_URL = `http://127.0.0.1:${fake.server.address().port}`;
+    process.env.DSH_BROWSER_POD_KEEP = '1';
+    process.env.DSH_BROWSER_PATH = executable;
+
+    const opened = await h.call('browser', { action: 'open', url: `${base}/` });
+    assert.equal(opened.ok, true, JSON.stringify(opened));
+    const closed = await h.call('browser', { action: 'session', op: 'close' });
+    assert.equal(closed.ok, true);
+    assert.match(String(closed.rendered), /kept running/);
+    assert.equal(fake.calls.deleted, 0);
+  } finally {
+    process.env = saved;
+    h.cleanup();
+    external.cleanup();
+    await new Promise((resolve) => fake.server.close(resolve));
+    await new Promise((resolve) => pages.close(resolve));
+  }
+});
+
+test('attach：非回环 CDP 默认拒绝', async () => {
+  const h = await createHarness();
+  const saved = { ...process.env };
+  try {
+    delete process.env.DSH_BROWSER_ALLOW_REMOTE_CDP;
+    const result = await h.call('browser', { action: 'open', url: 'https://example.com/', cdp_url: 'http://10.255.255.1:9222' });
+    assert.equal(result.ok, false);
+    assert.equal(result.code, 'cdp_not_allowed');
+  } finally {
+    process.env = saved;
+    h.cleanup();
+  }
+});
+
+test('已有本地浏览器时 attach 另一个 CDP 会被拒绝而不是静默复用', async (t) => {
+  const chromium = await (async () => {
+    try {
+      const mod = await import('playwright');
+      return mod.chromium;
+    } catch {
+      return null;
+    }
+  })();
+  const executable = process.env.DSH_BROWSER_PATH || (chromium ? chromium.executablePath() : '');
+  if (!executable || !existsSync(executable)) return t.skip('no browser executable');
+  if (process.platform === 'linux' && !process.env.DISPLAY) return t.skip('no DISPLAY');
+  process.env.DSH_BROWSER_PATH = executable;
+  const pages = await startServer();
+  const base = `http://127.0.0.1:${pages.address().port}`;
+  const h = await createHarness();
+  const saved = { ...process.env };
+  try {
+    delete process.env.DSH_BROWSER_ENGINE;
+    const opened = await h.call('browser', { action: 'open', url: `${base}/` });
+    assert.equal(opened.ok, true, JSON.stringify(opened));
+    const conflict = await h.call('browser', { action: 'open', url: `${base}/page2`, cdp_url: 'http://127.0.0.1:9222' });
+    assert.equal(conflict.ok, false);
+    assert.equal(conflict.code, 'browser_already_open');
+  } finally {
+    process.env = saved;
+    h.cleanup();
+    await new Promise((resolve) => pages.close(resolve));
+  }
+});

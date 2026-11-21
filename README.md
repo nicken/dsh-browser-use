@@ -19,8 +19,10 @@ Use a **pod** when the browser cannot be trusted, must be watched by a human, or
 afterwards. The design rationale and the intended composition are in
 [docs/POSITIONING.md](docs/POSITIONING.md).
 
-> The plugin cannot attach to a pod's `cdp_url` yet: `browser_open({ cdp_url })` is a roadmap item.
-> Today, pod pages are driven by the pod's own MCP driver tools.
+> Attach mode is available: `browser({action:"open", cdp_url})` drives an existing CDP endpoint (a
+> browser-pods pod, or any Chrome started with `--remote-debugging-port`). With
+> `DSH_BROWSER_ENGINE=pod` the plugin creates and owns a pod itself and still exposes only the
+> `browser_*` tool surface. See [docs/DEPLOYMENT-FORMS.md](docs/DEPLOYMENT-FORMS.md).
 
 ---
 
@@ -369,7 +371,9 @@ no password authentication, so never publish its port.
   (15 minutes idle).
 - Plugin browser auto-detection targets Windows install locations; elsewhere set
   `DSH_BROWSER_PATH`. No `browser_eval`-style JavaScript execution tool by design.
-- The plugin cannot attach to a pod's `cdp_url` yet (see [docs/POSITIONING.md](docs/POSITIONING.md)).
+- Pod integration is opt-in through environment variables (`DSH_BROWSER_ENGINE`, `DSH_BROWSER_POD_*`);
+  the plugin never talks MCP itself. Remote pods need `DSH_BROWSER_POD_URL` to point at the pod host and
+  the pod's CDP endpoint to be reachable from the DSH host.
 - browser-pods is single-host (no cross-machine scheduling), has no audio or GPU acceleration, and
   its noVNC view is unauthenticated by default.
 - Traces include DOM snapshots and may contain sensitive page data; recordings are stored

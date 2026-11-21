@@ -1368,6 +1368,40 @@ async function closePodBestEffort(podId, reason) {
   }
 }
 
+/**
+ * Close one instance and, when it owns a pod, archive that pod too.
+ * Used by the tool surface, the HTTP control route and the idle sweeper so the
+ * cleanup paths cannot drift apart.
+ */
+async function closeInstanceAndPod(instance, reason) {
+  if (!instance) return { podId: '', mode: '' }
+  const podId = instance.pod?.id && instance.pod.keep !== true ? instance.pod.id : ''
+  const mode = instance.mode
+  await instance.close()
+  instances.delete(instance.sessionId)
+  if (podId) await closePodBestEffort(podId, reason)
+  return { podId, mode }
+}
+
+/**
+ * browser-pods advertises its CDP endpoint as 127.0.0.1 when it runs with host
+ * networking. When the control plane itself is remote, rewrite the loopback
+ * hostname to the pod host so the plugin attaches to the right machine.
+ */
+function rewritePodEndpoint(raw) {
+  try {
+    const pod = new URL(podConfig().url)
+    const target = new URL(raw)
+    if (loopbackHost(target.hostname) && !loopbackHost(pod.hostname)) {
+      target.hostname = pod.hostname
+      return target.href.replace(/\/$/, '')
+    }
+    return raw
+  } catch {
+    return raw
+  }
+}
+
 function podLabelFor(sessionId) {
   return `dsh:${String(sessionId || '').slice(-12)}`
 }
@@ -1436,12 +1470,17 @@ async function openBrowserInPod(sessionId, admittedUrl) {
       ...(config.profile ? { profile: config.profile } : {}),
       ...(config.ttlMinutes ? { ttl_minutes: config.ttlMinutes } : {}),
     })
-    const cdpUrl = String(created?.cdp_url || '')
+    const cdpUrl = rewritePodEndpoint(String(created?.cdp_url || ''))
     if (!cdpUrl) throw podError('pod_attach_failed', 'browser-pods did not return cdp_url.', 'Check the browser-pods version and logs.')
     const instance = await instanceFor(sessionId, {
       create: true,
       attachUrl: cdpUrl,
-      pod: { id: String(created?.id || ''), liveViewUrl: String(created?.live_view_url || ''), baseUrl: config.url, keep: config.keep },
+      pod: {
+        id: String(created?.id || ''),
+        liveViewUrl: rewritePodEndpoint(String(created?.live_view_url || '')),
+        baseUrl: config.url,
+        keep: config.keep,
+      },
     })
     if (instance && instance.error) throw podError('pod_refused', `At most ${MAX_INSTANCES} browsers may be open at once.`, 'Close another conversation browser.')
     const meta = await instance.navigate(admittedUrl)
@@ -1472,15 +1511,49 @@ async function browserOpen(ctx, exec, args) {
   if (!admitted.ok) return admitted
 
   const cdpUrl = typeof args?.cdp_url === 'string' ? args.cdp_url.trim() : ''
+
+  // Reuse first: opening again in the same conversation navigates the existing
+  // browser. This also prevents creating a pod that nobody would attach to.
+  const existing = instances.get(sessionId)
+  if (existing && !existing.closed) {
+    existing.touch()
+    if (cdpUrl && existing.cdpUrl !== cdpUrl) {
+      return refusal(
+        'browser_open',
+        'browser_already_open',
+        'A browser is already open for this conversation.',
+        'Close it first (browser_session action=close) if you want to switch to another CDP endpoint.',
+      )
+    }
+    try {
+      const meta = await existing.navigate(admitted.url)
+      if (existing.mode !== 'attached') await existing.page('Page.bringToFront').catch(() => {})
+      return {
+        ok: true,
+        tool: 'browser_open',
+        mode: existing.mode,
+        ...(existing.cdpUrl ? { cdp_url: existing.cdpUrl } : {}),
+        ...(existing.pod ? { pod: { id: existing.pod.id, live_view_url: existing.pod.liveViewUrl } } : {}),
+        url: String(meta?.url ?? admitted.url),
+        title: String(meta?.title ?? ''),
+        targetId: existing.targetId,
+        instances: instances.size,
+      }
+    } catch (error) {
+      return refusal('browser_open', 'cdp_error', `Navigation failed: ${messageOf(error).slice(0, 400)}`, 'Retry once; if it keeps failing, close the session and reopen.')
+    }
+  }
+
   if (cdpUrl) return await openBrowserAttached(sessionId, admitted.url, cdpUrl)
 
   const engine = browserEngine()
+  let engineNote = ''
   if (engine !== 'local') {
     const attempt = await openBrowserInPod(sessionId, admitted.url)
     if (attempt.ok) return attempt
     if (engine === 'pod') return attempt
-    // engine=auto: fall through to a local browser, but tell the model why.
-    if (attempt.code !== 'too_many_instances') attempt.engineNote = `pod engine unavailable (${attempt.code}); used the local browser`
+    // engine=auto: fall through to a local browser and say so in the result.
+    engineNote = `pod engine unavailable (${attempt.code}); used the local browser`
   }
 
   let instance = null
@@ -1506,6 +1579,7 @@ async function browserOpen(ctx, exec, args) {
       title: String(meta?.title ?? ''),
       targetId: instance.targetId,
       instances: instances.size,
+      ...(engineNote ? { engineNote } : {}),
     }
   } catch (error) {
     return refusal('browser_open', 'cdp_error', `Navigation failed: ${messageOf(error).slice(0, 400)}`, 'Retry once; if it keeps failing, close the session with browser_session and reopen.')
@@ -1976,10 +2050,9 @@ async function browserSession(ctx, exec, args) {
   if (!instance || instance.closed) {
     return { ok: true, tool: 'browser_session', action, sessionId, instances: instances.size, rendered: 'No browser was open for this conversation.' }
   }
-  const podId = instance.pod?.id && instance.pod.keep !== true ? instance.pod.id : ''
-  const mode = instance.mode
-  await instance.close()
-  if (podId) await closePodBestEffort(podId, 'closed from DSH browser_session')
+  const podWasKept = instance.pod?.keep === true
+  const podId = podWasKept ? '' : instance.pod?.id || ''
+  const { mode } = await closeInstanceAndPod(instance, 'closed from DSH browser_session')
   return {
     ok: true,
     tool: 'browser_session',
@@ -1988,9 +2061,12 @@ async function browserSession(ctx, exec, args) {
     instances: instances.size,
     mode,
     ...(podId ? { pod: { id: podId, closed: true } } : {}),
-    rendered: mode === 'attached'
-      ? `Detached from the browser for this conversation (${instances.size} left).`
-      : `Closed the browser for this conversation (${instances.size} left).`,
+    ...(podWasKept ? { pod: { id: instance.pod?.id || '', kept: true } } : {}),
+    rendered: podWasKept
+      ? 'Detached from the browser; the pod was kept running (DSH_BROWSER_POD_KEEP=1).'
+      : mode === 'attached'
+        ? `Detached from the browser for this conversation (${instances.size} left).`
+        : `Closed the browser for this conversation (${instances.size} left).`,
   }
 }
 
@@ -2186,8 +2262,7 @@ async function serveBrowserStatus(request) {
         if (!targetSession) return errorResponse('sessionId is required for close')
         const instance = instances.get(targetSession)
         if (!instance) return errorResponse(`no browser is open for ${targetSession}`, 404)
-        await instance.close()
-        instances.delete(targetSession)
+        await closeInstanceAndPod(instance, 'closed from the browser status route')
       } else {
         return errorResponse('action must be "pause", "resume" or "close"')
       }
@@ -2426,7 +2501,10 @@ export function apply(ctx) {
               default:
                 return refusal('browser', 'invalid_args', 'action must be open, observe, act, read, session or evidence.', 'Pass one of the supported actions.')
             }
-            auditBrowser(exec, 'browser', args, value)
+            // Record the concrete inner action (click/type/...) so the audit log
+            // stays as precise as the granular tool surface.
+            const auditArgs = action === 'act' ? { ...args, action: args.act } : args
+            auditBrowser(exec, 'browser', auditArgs, value)
             return value
           },
         }),
@@ -2711,12 +2789,7 @@ export function apply(ctx) {
     const timer = setInterval(() => {
       for (const [sessionId, instance] of instances) {
         if (Date.now() - instance.lastUsedAt <= IDLE_CLOSE_MS) continue
-        const podId = instance.pod?.id && instance.pod.keep !== true ? instance.pod.id : ''
-        void instance
-          .close()
-          .then(() => (podId ? closePodBestEffort(podId, 'idle timeout') : undefined))
-          .catch(() => {})
-        instances.delete(sessionId)
+        void closeInstanceAndPod(instance, 'idle timeout').catch(() => {})
       }
     }, IDLE_SWEEP_MS)
     return () => {

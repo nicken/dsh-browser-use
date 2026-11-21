@@ -116,6 +116,20 @@ These are known and cannot be fixed by documentation alone:
 
 ---
 
+### 1.5 Attach mode and the pod engine
+
+- **Attach mode** (`browser({action:"open", cdp_url})`) drives an existing Chromium over CDP. Only
+  loopback endpoints are accepted by default; set `DSH_BROWSER_ALLOW_REMOTE_CDP=1` to allow remote
+  hosts (the configured pod host is always allowed). The plugin does not kill an attached browser on
+  close — it detaches; archiving remains the pod's responsibility.
+- **Pod engine** (`DSH_BROWSER_ENGINE=pod|auto`) uses the browser-pods REST API to create and delete
+  pods. `DSH_BROWSER_POD_TOKEN` is sent as a Bearer header only; it is never written to tool results,
+  the audit trail or the client UI, and error messages contain only the control-plane URL and the
+  server's error text. `DSH_BROWSER_POD_KEEP=1` deliberately leaves a pod running after close.
+- **Potency**: a pod created this way inherits the pod's isolation boundary, but the plugin's URL
+  policy, password/upload/download refusals and approval flow still apply. Treat the capability as
+  granting a browser *and* the pod control plane to the session.
+
 ## Part 2 — browser-pods MCP server
 
 ### 2.1 What it protects, and from what

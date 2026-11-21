@@ -91,7 +91,7 @@ The client does not interpret protocol errors beyond rejecting with the CDP erro
 ### 1.3 Browser instance lifecycle
 
 `instances` is a module-level `Map<sessionId, BrowserInstance>`. One instance per conversation,
-created on demand by `browser_open`; there is no separate "attach" input in the plugin yet.
+created on demand by `browser_open`; `cdp_url` attaches to an externally started Chromium instead (see §Attach mode).
 
 Startup (`BrowserInstance.start`):
 
@@ -510,7 +510,7 @@ Both sides implement the same four-step loop; the names differ because the trans
 The plugin deliberately does not implement process supervision, recording or remote access; the pod
 deliberately does not implement approval, refs or query reads. The planned composition is "pod as the
 body, plugin as the brain": the pod exposes `cdp_url`, and the plugin's CDP client only needs a
-WebSocket endpoint and a page target. That attach mode is **not implemented yet** — see
+WebSocket endpoint and a page target. `browser_open({ cdp_url })` implements this — see
 [POSITIONING.md](POSITIONING.md) for the intended contract and the constraints (do not spawn a local
 browser, detach rather than kill, inherit the pod's certificate policy, surface `live_view_url`).
 

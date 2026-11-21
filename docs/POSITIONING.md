@@ -115,12 +115,11 @@ What this buys:
 - **Auditable sessions.** The pod records video/trace; the plugin writes its audit log.
   Correlate by session id.
 
-Status: `browser_open({ cdp_url })` is **not implemented in the plugin yet** (the pod side is
-already there and used by external drivers). Until then, use the pod's own driver tools
-(`browser_snapshot` / `browser_click`) and accept the higher token cost, or use the plugin
-with a local browser.
+Status: **implemented** (unreleased). The plugin attaches with `browser({action:"open", cdp_url})`, and
+`DSH_BROWSER_ENGINE=pod|auto` lets it create/own a pod through the browser-pods REST API while keeping the
+same `browser_*` tool surface. The pod's own MCP driver tools remain available as form B.
 
-Design constraints for attach mode, when implemented:
+Design constraints implemented by attach mode:
 
 - The plugin must not spawn its own Chromium when given `cdp_url`.
 - The plugin must not assume it can kill the browser: closing a session only detaches;
@@ -149,7 +148,7 @@ Design constraints for attach mode, when implemented:
 
 | Horizon | Item | Why |
 |---|---|---|
-| Near | Plugin `browser_open({ cdp_url })` attach mode + `browser_session` attached state | completes the brain/body story; lets DSH agents use pods with low token cost |
+| Done | Plugin `browser_open({ cdp_url })` attach mode + `browser_session` attached state | shipped in this release; lets DSH agents use pods with low token cost |
 | Near | Share this document's contract table as JSON fixtures in both test suites | keeps tool semantics honest across two implementations |
 | Mid | Optional `engine: "pod"` shortcut in the plugin (calls MCP server if configured) | one-line switch for users running both |
 | Mid | Pod "profile handoff" (export/import a named profile between local and pod) | logged-in workflows without copying a daily profile |
