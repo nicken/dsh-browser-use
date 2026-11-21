@@ -11,7 +11,7 @@ the MCP server is a plain Node ESM service that runs from source (or from the Do
 |---|---|---|
 | DSH with a `web` profile | plugin development | Plugin bundles are installed into a profile |
 | Node.js >= 22 | repository tooling, MCP server, tests | `package.json` `engines.node` |
-| npm | installing the Playwright devDependency and MCP dependencies | |
+| npm | installing test-only Playwright and the MCP dependencies | |
 | Microsoft Edge or Google Chrome | running the plugin | Linux/macOS: point `DSH_BROWSER_PATH` at the executable |
 | Xvfb / a display | plugin integration tests, MCP server | `xvfb-run` on headless Linux |
 | Docker (Linux host) | browser-pods | Xvfb, x11vnc, noVNC and Chromium run in the image |
@@ -27,7 +27,7 @@ the MCP server is a plain Node ESM service that runs from source (or from the Do
 ├── cordis.patch.yml            # DSH bundle patch
 ├── locale/{en,zh}.json         # Bundle display metadata
 ├── icon.svg
-├── package.json                # Plugin metadata; tests/devDependency/scripts
+├── package.json                # Plugin metadata; test scripts
 ├── tests/
 │   ├── harness.mjs             # Fake Cordis context that mounts apply()
 │   ├── tools.unit.test.mjs     # Tool surface, URL policy, pause, refusal codes
@@ -118,8 +118,8 @@ State written at runtime: `browser-use/profiles/<sessionId>/`, `browser-use/poli
 See [TESTING.md](TESTING.md) for the full description. The short version:
 
 ```bash
-npm install
-npx playwright install chromium          # plus --with-deps on Linux
+npm install --no-save playwright@1.62.1   # test-only; not a package dependency
+npx playwright install chromium           # plus --with-deps on Linux
 npm run test:unit                        # no browser needed
 xvfb-run -a npm test                     # unit + real Chromium
 ```

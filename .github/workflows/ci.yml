@@ -37,6 +37,13 @@ jobs:
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
         run: npm ci --no-audit --no-fund
 
+      # Playwright is test-only on purpose: keeping it out of package.json means
+      # `dsh plugin add github:...` never downloads a browser for end users.
+      - name: Install test-only Playwright
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+        run: npm install --no-save --no-package-lock playwright@1.62.1
+
       - name: Install Xvfb
         run: |
           sudo apt-get update
@@ -81,7 +88,7 @@ jobs:
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
 
-      - name: Test (config + certificate behaviour)
+      - name: Test (config + auth + certificate behaviour)
         run: xvfb-run -a npm test
 
   # Builds the browser-pods image to catch Dockerfile regressions. Slow (apt +

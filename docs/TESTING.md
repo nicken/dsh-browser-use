@@ -71,7 +71,7 @@ Requirements and skip behaviour:
 
 - A display is required on Linux; without `DISPLAY` the test **skips** with a message. Run it under
   `xvfb-run` on headless machines.
-- `playwright` must be installed (`npm install`); without it the test skips.
+- `playwright` is test-only and intentionally **not** a package dependency (so consumers never download a browser). Install it with `npm install --no-save playwright@1.62.1`; without it the test skips.
 - The browser executable is resolved from `DSH_BROWSER_PATH`, then `PLAYWRIGHT_CHROMIUM_PATH`, then
   Playwright's `chromium.executablePath()`. Install Playwright's browser with
   `npx playwright install chromium` (add `--with-deps` on a clean Linux host).
@@ -162,8 +162,8 @@ node scripts/browserctl.mjs list # lifecycle CLI (BROWSER_PODS_ENDPOINT override
 
 | Job | Runner | Node | Steps |
 |---|---|---|---|
-| `plugin` | `ubuntu-latest` | matrix `22`, `24` | `npm install --no-audit --no-fund` → apt `xvfb` → `npx playwright install --with-deps chromium` → `xvfb-run -a npm test` with `DSH_BROWSER_NO_SANDBOX=1` |
-| `mcp` | `ubuntu-latest` | `22` | `cd mcp` → `npm install --no-audit --no-fund` → apt `xvfb` → `npx playwright install --with-deps chromium` → `xvfb-run -a npm test` |
+| `plugin` | `ubuntu-latest` | matrix `22`, `24` | `npm ci` → `npm install --no-save playwright@1.62.1` (test-only) → apt `xvfb` → `npx playwright install --with-deps chromium` → `xvfb-run -a npm test` with `DSH_BROWSER_NO_SANDBOX=1` |
+| `mcp` | `ubuntu-latest` | `22` | `cd mcp` → `npm ci` → apt `xvfb` → `npx playwright install --with-deps chromium` → `xvfb-run -a npm test` |
 | `docker` | `ubuntu-latest` | — | on `main` pushes only: `docker build -t browser-pods ./mcp`; `continue-on-error: true` (optional check) |
 
 Workflow-level settings: `permissions: contents: read`, and a `concurrency` group keyed by workflow +

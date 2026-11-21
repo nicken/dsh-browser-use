@@ -62,8 +62,5 @@
     "test": "node --test tests/tools.unit.test.mjs tests/browser.integration.test.mjs",
     "test:unit": "node --test tests/tools.unit.test.mjs",
     "test:integration": "node --test tests/browser.integration.test.mjs"
-  },
-  "devDependencies": {
-    "playwright": "1.62.1"
   }
 }
