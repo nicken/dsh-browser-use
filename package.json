@@ -1,7 +1,7 @@
 {
-  "name": "@local/dsh-browser-use",
+  "name": "dsh-browser-use",
   "version": "0.2.0",
-  "private": true,
+  "private": false,
   "type": "module",
   "description": "Per-session real-browser control over CDP with numbered observations, query reads and a deterministic safety layer.",
   "exports": {
@@ -15,7 +15,9 @@
     "client.js",
     "cordis.patch.yml",
     "locale/*.json",
-    "icon.svg"
+    "icon.svg",
+    "README.md",
+    "LICENSE"
   ],
   "dsh": {
     "bundle": {
@@ -28,5 +30,31 @@
         "@deepseek-ai/dsh-client-locale"
       ]
     }
+  },
+  "license": "MIT",
+  "author": "linzhicong",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nicken/dsh-browser-use.git"
+  },
+  "homepage": "https://github.com/nicken/dsh-browser-use#readme",
+  "bugs": {
+    "url": "https://github.com/nicken/dsh-browser-use/issues"
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "browser",
+    "browser-automation",
+    "cdp",
+    "agent",
+    "mcp"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test tests/"
   }
 }
