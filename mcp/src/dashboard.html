@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Browser Pods · 浏览器沙箱看板</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --panel2: #1d2129; --line: #2a2f3a;
+    --fg: #e6e9ef; --dim: #9aa4b2; --accent: #4c9aff; --ok: #34c759; --warn: #ffb020; --bad: #ff5c5c;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
+  header { position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between;
+           padding: 14px 22px; background: rgba(15,17,21,.92); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
+  h1 { font-size: 16px; margin: 0; font-weight: 600; letter-spacing: .2px; }
+  h1 span { color: var(--dim); font-weight: 400; margin-left: 8px; font-size: 12px; }
+  .pills { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .pill { padding: 4px 10px; border-radius: 999px; background: var(--panel2); border: 1px solid var(--line); color: var(--dim); font-size: 12px; }
+  .pill b { color: var(--fg); font-weight: 600; }
+  main { padding: 18px 22px 60px; display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; }
+  .card-head { display: flex; gap: 8px; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+  .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .name small { color: var(--dim); font-weight: 400; margin-left: 6px; font-size: 11px; }
+  .badge { font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--dim); white-space: nowrap; }
+  .badge.ready { color: var(--ok); border-color: rgba(52,199,89,.4); }
+  .badge.starting { color: var(--warn); border-color: rgba(255,176,32,.4); }
+  .badge.error, .badge.closed { color: var(--bad); border-color: rgba(255,92,92,.4); }
+  .thumb { position: relative; aspect-ratio: 16 / 10; background: #0a0c10; border-bottom: 1px solid var(--line); }
+  .thumb img { width: 100%; height: 100%; object-fit: contain; display: block; }
+  .thumb .ph { position: absolute; inset: 0; display: grid; place-items: center; color: #4a5261; font-size: 12px; }
+  .body { padding: 10px 14px; display: grid; gap: 6px; }
+  .url { color: var(--accent); text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; font-size: 12px; }
+  .title { color: var(--dim); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .meta { color: #7d8798; font-size: 11px; display: flex; gap: 12px; flex-wrap: wrap; }
+  .events { margin: 0; padding: 8px 14px 12px; list-style: none; display: grid; gap: 3px; max-height: 128px; overflow: auto; border-top: 1px dashed var(--line); }
+  .events li { color: var(--dim); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .events code { color: #c3cbd8; background: var(--panel2); border-radius: 4px; padding: 0 4px; }
+  .actions { display: flex; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--line); }
+  button, .btn { font: inherit; font-size: 12px; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel2); color: var(--fg); cursor: pointer; text-decoration: none; }
+  button:hover, .btn:hover { border-color: var(--accent); }
+  button.danger:hover { border-color: var(--bad); color: var(--bad); }
+  .empty { grid-column: 1 / -1; text-align: center; padding: 60px 20px; color: var(--dim); border: 1px dashed var(--line); border-radius: 12px; }
+  .empty pre { text-align: left; display: inline-block; margin: 14px auto 0; background: var(--panel); border: 1px solid var(--line); padding: 14px 18px; border-radius: 10px; color: #c3cbd8; font-size: 12px; }
+  footer { color: #6b7484; font-size: 11.5px; padding: 0 22px 30px; }
+  .replay { padding: 0 22px 40px; }
+  .replay h2 { font-size: 14px; font-weight: 600; margin: 8px 0 4px; }
+  .replay .sub { color: var(--dim); font-size: 12px; margin-bottom: 14px; }
+  .replay-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); }
+  .rec { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+  .rec-head { display: flex; justify-content: space-between; gap: 8px; padding: 9px 13px; border-bottom: 1px solid var(--line); font-size: 12.5px; }
+  .rec-head small { color: var(--dim); }
+  .rec video { width: 100%; display: block; background: #000; max-height: 260px; }
+  .rec .no-video { padding: 26px 14px; text-align: center; color: #5b6472; font-size: 12px; background: #0a0c10; }
+  .rec-body { padding: 8px 13px 10px; display: grid; gap: 5px; font-size: 11.5px; color: var(--dim); }
+  .rec-body code { background: var(--panel2); border-radius: 4px; padding: 1px 5px; color: #c3cbd8; font-size: 11px; }
+  .rec-actions { display: flex; gap: 8px; padding: 9px 13px; border-top: 1px solid var(--line); flex-wrap: wrap; }
+  .rec-actions a, .rec-actions button { font-size: 11.5px; padding: 5px 10px; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Browser Pods <span>每个 agent 一个独立虚拟浏览器</span></h1>
+  <div class="pills">
+    <div class="pill">会话 <b id="count">-</b> / <span id="max">-</span></div>
+    <div class="pill">自动刷新 <b id="tick">on</b></div>
+    <div class="pill"><a href="/api/sessions" target="_blank">JSON</a></div>
+  </div>
+</header>
+<main id="grid"></main>
+<section class="replay">
+  <h2>回放与复盘</h2>
+  <div class="sub">会话关闭后自动归档：webm 录像可播放，trace.zip 用 <code>npx playwright show-trace &lt;文件&gt;</code> 打开（也可拖到 trace.playwright.dev）。</div>
+  <div class="replay-grid" id="replay"></div>
+</section>
+<footer>
+  实时画面地址（live_view_url）就是该会话独占的虚拟桌面，可交互接管，不会碰你正在用的桌面。
+  MCP 端点：<code id="mcp"></code>
+</footer>
+
+<script>
+const grid = document.getElementById('grid');
+const state = new Map();
+
+function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function short(s, n = 72) { s = String(s ?? ''); return s.length > n ? s.slice(0, n) + '…' : s; }
+function ago(ts) {
+  if (!ts) return '-';
+  const d = Math.max(0, Date.now() - new Date(ts).getTime());
+  if (d < 60e3) return Math.round(d / 1000) + 's 前';
+  if (d < 3600e3) return Math.round(d / 60e3) + 'm 前';
+  return Math.round(d / 3600e3) + 'h 前';
+}
+
+function card(s, cfg) {
+  const st = state.get(s.id) || {};
+  const thumbSrc = `/api/sessions/${encodeURIComponent(s.id)}/screenshot.jpg?t=${st.shotAt || 0}`;
+  const isReady = s.state === 'ready';
+  const events = (s.events || []).slice(-6).reverse().map(e =>
+    `<li><code>${esc(e.kind)}</code> ${esc(short(e.text, 88))}</li>`).join('');
+  return `
+  <section class="card" data-id="${esc(s.id)}">
+    <div class="card-head">
+      <div class="name">${esc(s.label)}<small>${esc(s.owner)} · ${esc(s.profile)}</small></div>
+      <div class="badge ${esc(s.state)}">${esc(s.state)}</div>
+    </div>
+    <div class="thumb">
+      ${isReady ? `<img src="${thumbSrc}" alt="live screenshot" onerror="this.style.display='none';this.nextElementSibling.style.display='grid'">` : ''}
+      <div class="ph" style="${isReady ? 'display:none' : ''}">${isReady ? '截图加载中…' : '会话未就绪'}</div>
+    </div>
+    <div class="body">
+      <a class="url" href="${esc(s.url || '#')}" target="_blank" rel="noreferrer">${esc(short(s.url || '(blank)', 96))}</a>
+      <div class="title">${esc(short(s.title || '—', 96))}</div>
+      <div class="meta">
+        <span>创建 ${esc(ago(s.created_at))}</span>
+        <span>活动 ${esc(ago(s.last_used_at))}</span>
+        <span>操作 ${s.stats?.ops ?? 0} 次</span>
+        <span>截图 ${s.stats?.screenshots ?? 0} 张</span>
+        <span>CDP ${esc(s.cdp_url || '-')}</span>
+      </div>
+    </div>
+    <ul class="events">${events || '<li>暂无操作记录</li>'}</ul>
+    <div class="actions">
+      <a class="btn" href="${esc(s.live_view_url)}" target="_blank" rel="noreferrer">打开实时画面</a>
+      <button data-act="shot">刷新截图</button>
+      <button data-act="close" class="danger">关闭会话</button>
+    </div>
+  </section>`;
+}
+
+async function poll() {
+  try {
+    const r = await fetch('/api/sessions', { cache: 'no-store' });
+    const data = await r.json();
+    document.getElementById('count').textContent = data.pods;
+    document.getElementById('max').textContent = data.max;
+    document.getElementById('tick').textContent = 'on';
+
+    if (!data.sessions.length) {
+      grid.innerHTML = `<div class="empty">目前没有会话。<br>让 agent 调一次 <code>browser_open</code> 就会出现，结束用 <code>browser_close</code>。<pre>{"name":"browser_open","arguments":{"label":"demo","owner":"me"}}</pre></div>`;
+      return;
+    }
+
+    const seen = new Set();
+    for (const s of data.sessions) {
+      seen.add(s.id);
+      const prev = state.get(s.id) || {};
+      // 每 4 秒刷新一次缩略图
+      const shotAt = (Date.now() - (prev.shotAt || 0) > 4000) ? Date.now() : prev.shotAt;
+      state.set(s.id, { ...prev, shotAt });
+      const html = card(s, {});
+      const existing = grid.querySelector(`[data-id="${CSS.escape(s.id)}"]`);
+      if (existing) {
+        const img = existing.querySelector('.thumb img');
+        if (img && shotAt !== prev.shotAt) img.src = `/api/sessions/${encodeURIComponent(s.id)}/screenshot.jpg?t=${shotAt}`;
+        // 只更新文本区域，避免整卡重绘打断图片加载
+        existing.querySelector('.badge').className = 'badge ' + s.state;
+        existing.querySelector('.badge').textContent = s.state;
+        existing.querySelector('.url').textContent = short(s.url || '(blank)', 96);
+        existing.querySelector('.url').href = s.url || '#';
+        existing.querySelector('.title').textContent = short(s.title || '—', 96);
+        existing.querySelector('.events').innerHTML = (s.events || []).slice(-6).reverse()
+          .map(e => `<li><code>${esc(e.kind)}</code> ${esc(short(e.text, 88))}</li>`).join('') || '<li>暂无操作记录</li>';
+        existing.querySelector('.meta').innerHTML =
+          `<span>创建 ${esc(ago(s.created_at))}</span><span>活动 ${esc(ago(s.last_used_at))}</span>` +
+          `<span>操作 ${s.stats?.ops ?? 0} 次</span><span>截图 ${s.stats?.screenshots ?? 0} 张</span>`;
+      } else {
+        grid.insertAdjacentHTML('beforeend', html);
+      }
+    }
+    for (const el of [...grid.querySelectorAll('.card')]) {
+      if (!seen.has(el.dataset.id)) el.remove();
+    }
+  } catch (e) {
+    document.getElementById('tick').textContent = 'off';
+  }
+}
+
+grid.addEventListener('click', async (ev) => {
+  const btn = ev.target.closest('button[data-act]');
+  if (!btn) return;
+  const card = btn.closest('.card');
+  const id = card?.dataset.id;
+  if (!id) return;
+  if (btn.dataset.act === 'shot') {
+    const img = card.querySelector('.thumb img');
+    if (img) img.src = `/api/sessions/${encodeURIComponent(id)}/screenshot.jpg?t=${Date.now()}`;
+  }
+  if (btn.dataset.act === 'close') {
+    if (!confirm('关闭这个会话？它的 Chromium / 虚拟显示器都会被回收。')) return;
+    await fetch(`/api/sessions/${encodeURIComponent(id)}/close`, { method: 'POST' });
+    poll();
+  }
+});
+
+const replayEl = document.getElementById('replay');
+let replaySig = '';
+let replayTimer = null;
+
+function fmtBytes(n) { return n > 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB'; }
+function fmtTime(iso) { return iso ? new Date(iso).toLocaleString('zh-CN', { hour12: false }) : '-'; }
+
+async function pollReplay() {
+  // 正在播放时不重绘，避免打断
+  if ([...replayEl.querySelectorAll('video')].some(v => !v.paused)) { scheduleReplay(); return; }
+  try {
+    const r = await fetch('/api/artifacts', { cache: 'no-store' });
+    const { artifacts } = await r.json();
+    const sig = JSON.stringify(artifacts.map(a => [a.id, a.files.length]));
+    if (sig === replaySig) { scheduleReplay(); return; }
+    replaySig = sig;
+    if (!artifacts.length) {
+      replayEl.innerHTML = '<div class="empty" style="padding:28px">还没有归档。会话关闭（browser_close / 空闲超时 / 看板关闭）后，录像和 trace 会归档到这里。</div>';
+      scheduleReplay();
+      return;
+    }
+    replayEl.innerHTML = artifacts.map(a => {
+      const video = (a.files || []).find(f => f.name.endsWith('.webm'));
+      const trace = (a.files || []).find(f => f.name === 'trace.zip');
+      const base = `/api/artifacts/${encodeURIComponent(a.id)}`;
+      return `<div class="rec" data-id="${esc(a.id)}">
+        <div class="rec-head"><div><b>${esc(a.label || a.id)}</b><br><small>${esc(a.owner || '')} · ${esc(a.profile || '')}</small></div>
+          <div style="text-align:right"><small>${esc(fmtTime(a.started_at))}<br>${a.duration_s || 0}s · ${esc(a.close_reason || '')}</small></div></div>
+        ${video ? `<video controls preload="metadata" src="${base}/${encodeURIComponent(video.name)}"></video>`
+                : '<div class="no-video">没有录像（可能未开启录制，或会话启动即失败）</div>'}
+        <div class="rec-body">
+          <div>最后页面：<a href="${esc(a.last_url || '#')}" target="_blank" rel="noreferrer">${esc(short(a.last_url || '-', 70))}</a></div>
+          <div>操作 ${a.stats?.ops ?? 0} 次 · 截图 ${a.stats?.screenshots ?? 0} 张 · 控制台报错 ${(a.console_errors || []).length} · 网络异常 ${(a.network_issues || []).length}</div>
+          <div>${(a.files || []).map(f => `<span>${esc(f.name)} ${esc(fmtBytes(f.bytes))}</span>`).join(' · ')}</div>
+        </div>
+        <div class="rec-actions">
+          ${trace ? `<a class="btn" href="${base}/trace.zip" download>下载 trace.zip</a>
+                     <button data-copy="${esc(base.replace(/^\/api/, location.origin + '/api') + '/trace.zip')}">复制 show-trace 命令</button>` : ''}
+          ${video ? `<a class="btn" href="${base}/${encodeURIComponent(video.name)}" download>下载录像</a>` : ''}
+          <button class="danger" data-del="${esc(a.id)}">删除</button>
+        </div>
+      </div>`;
+    }).join('');
+  } catch (e) {
+    /* 忽略 */
+  }
+  scheduleReplay();
+}
+function scheduleReplay() { clearTimeout(replayTimer); replayTimer = setTimeout(pollReplay, 8000); }
+
+replayEl.addEventListener('click', async (ev) => {
+  const copy = ev.target.closest('button[data-copy]');
+  if (copy) {
+    const cmd = `npx playwright show-trace ${copy.dataset.copy}`;
+    try { await navigator.clipboard.writeText(cmd); copy.textContent = '已复制'; }
+    catch { prompt('复制这条命令', cmd); }
+    setTimeout(() => { copy.textContent = '复制 show-trace 命令'; }, 1500);
+    return;
+  }
+  const del = ev.target.closest('button[data-del]');
+  if (del) {
+    if (!confirm('删除这份归档？录像和 trace 都会删掉。')) return;
+    await fetch(`/api/artifacts/${encodeURIComponent(del.dataset.del)}/delete`, { method: 'POST' });
+    replaySig = '';
+    pollReplay();
+  }
+});
+
+pollReplay();
+
+fetch('/api/config').then(r => r.json()).then(cfg => {
+  document.getElementById('mcp').textContent = cfg.mcp_endpoint;
+  document.getElementById('max').textContent = cfg.max;
+}).catch(() => {});
+
+poll();
+setInterval(poll, 2000);
+</script>
+</body>
+</html>

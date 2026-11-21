@@ -1,0 +1,9 @@
+data/
+node_modules/
+.npmcache/
+*.log
+build.log
+.devdata/
+
+# 运行产物
+*.bak
