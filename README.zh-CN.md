@@ -75,12 +75,31 @@
 
 ## 环境要求
 
-- **DSH 插件：** 已安装 DSH；本机有 Microsoft Edge 或 Google Chrome。自动探测覆盖 Windows 的
-  默认安装位置——其他平台或非标准安装请用 `DSH_BROWSER_PATH` 指定浏览器可执行文件。
-- **Node.js：** 仓库要求 >= 22（`engines.node`）；插件运行时没有 npm 依赖，测试用 Playwright
-  作为 devDependency。
-- **browser-pods：** 一台 Linux Docker 主机。镜像基于 Debian，运行 Xvfb、x11vnc、noVNC、
-  Playwright Chromium 和 MCP 服务器。
+两部分的前置条件不同，而且**不需要都装**。
+
+| 形态 | 宿主机需要 | 不需要 |
+|---|---|---|
+| **只装插件**（本机浏览器） | DSH（实测 `0.2.2-rc.5`，`web` profile）+ Microsoft Edge 或 Google Chrome | Docker、Playwright、`npm install`——插件没有运行时 npm 依赖，跑在 DSH 自带的 Node 上 |
+| **只装 MCP**（浏览器 pods） | Linux 宿主机上的 Docker Engine 24+（含 Compose v2）；每并发 pod 约 1–2 GB 内存、镜像约 2 GB 磁盘 | Xvfb、Chromium、noVNC、Node/Playwright——全部在镜像里，宿主机不需要装浏览器 |
+| **两者整合** | 以上两者；插件配置 pod 端点 | 形态 C（插件把会话路由到 pod）目前是设计提案，见 [docs/DEPLOYMENT-FORMS.md](docs/DEPLOYMENT-FORMS.md) |
+
+- **Node.js：** 仓库声明 `engines.node >= 22`；插件本身运行在 DSH 宿主内。测试用 Playwright，
+  按需安装：`npm install --no-save playwright@1.62.1`。
+- **插件浏览器：** Edge 或 Chrome。自动探测覆盖 Windows 默认安装路径；Linux/macOS 或非标准安装
+  请设置 `DSH_BROWSER_PATH=/path/to/chrome`。可见窗口需要桌面显示环境——无头服务器请用 pods。
+- **MCP 端口（默认仅回环）：** `8787` 控制面/MCP、`5902+` VNC、`6082+` noVNC、`9223+` CDP。
+  控制面要暴露到本机之外前，先设置 `MCP_TOKEN`。
+
+快速安装：
+
+```bash
+# 只装插件
+dsh plugin --profile web add github:nicken/dsh-browser-use
+
+# 只装 MCP
+cd mcp && docker compose up -d --build
+curl -s http://127.0.0.1:8787/healthz
+```
 
 ---
 
@@ -360,6 +379,8 @@ GitHub Actions 工作流 `.github/workflows/ci.yml` 会在 Node 22 和 24 上跑
 | 文档 | 内容 |
 |---|---|
 | [docs/POSITIONING.md](docs/POSITIONING.md) | 插件与 MCP 服务器如何分工、每个任务该由哪个组件承担 |
+| [docs/DEPLOYMENT-FORMS.md](docs/DEPLOYMENT-FORMS.md) | 三种形态（只插件 / 只 MCP / 整合为一个模型可见对象）的提案与迁移路径 |
+| [docs/TOOL-SURFACE.md](docs/TOOL-SURFACE.md) | 把 6 个工具合并为 1 个默认 facade + 可选「高级」开关的提案 |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 插件内部（CDP、观察、ref、安全、路由）与 MCP 内部（pod、录制、HTTP） |
 | [docs/SECURITY.md](docs/SECURITY.md) | 两个组件的威胁模型、默认边界与部署建议 |
 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | 本地开发、目录地图、MCP 子树工作流、发布流程 |

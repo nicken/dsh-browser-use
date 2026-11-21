@@ -43,6 +43,16 @@
 
 ## 二、快速开始
 
+### 前置依赖
+
+| 需要 | 版本/说明 |
+|---|---|
+| Linux 宿主机（或 Docker Desktop 的 Linux VM） | 推荐原生 Linux；macOS/Windows 走 Docker Desktop 也可以，但更慢 |
+| Docker Engine + Compose v2 | 24+；镜像基于 Debian，自带 Xvfb/x11vnc/noVNC/Chromium/Node，宿主机**不需要**预装浏览器 |
+| 资源 | 镜像约 1.8 GB；每个并发 pod 约 300–600 MB 内存（`PODS_MAX=6` 时建议 ≥ 6 GB 可用） |
+| 端口（默认仅回环） | `8787` 控制面/MCP、`5902+` VNC、`6082+` noVNC、`9223+` CDP |
+| 可选 | `MCP_TOKEN`（远程访问时必须）、`data/` 卷（保留 profile）、`--build-arg APT_MIRROR/NPM_REGISTRY`（网络受限时） |
+
 ```bash
 cd mcp                           # 在本仓库根目录执行；独立使用时进入项目目录
 docker compose up -d --build     # 首次构建 5~10 分钟

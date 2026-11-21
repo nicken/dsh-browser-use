@@ -85,13 +85,32 @@ afterwards. The design rationale and the intended composition are in
 
 ## Requirements
 
-- **DSH plugin:** a DSH installation; Microsoft Edge or Google Chrome. Auto-detection covers the
-  default Windows install locations — on other platforms, or for a non-standard install, set
-  `DSH_BROWSER_PATH` to the browser executable.
-- **Node.js:** >= 22 for the repository (`engines.node`); the plugin itself has no runtime npm
-  dependencies, and tests use Playwright as a devDependency.
-- **browser-pods:** a Linux Docker host. The image is Debian-based and runs Xvfb, x11vnc, noVNC,
-  Playwright Chromium and the MCP server.
+The two halves have different prerequisites, and you do not need both.
+
+| Form | Install on the host | Not needed |
+|---|---|---|
+| **Plugin only** (local browser) | DSH (tested with `0.2.2-rc.5`, `web` profile) and Microsoft Edge or Google Chrome | Docker, Playwright, `npm install` — the plugin has no runtime npm dependencies and runs on the Node that ships with DSH |
+| **MCP only** (browser pods) | Docker Engine 24+ with Compose v2 on a Linux host; ~2 GB disk and ~1–2 GB RAM per concurrent pod | Xvfb, Chromium, noVNC, Node/Playwright — everything is inside the image; no host browser required |
+| **Both, integrated** | Both of the above | Form C (plugin routes sessions to pods) is a proposal — see [docs/DEPLOYMENT-FORMS.md](docs/DEPLOYMENT-FORMS.md) |
+
+- **Node.js:** the repository declares `engines.node >= 22`; the plugin itself runs inside the DSH
+  host. Tests use Playwright, installed on demand: `npm install --no-save playwright@1.62.1`.
+- **Plugin browser:** Edge or Chrome. Auto-detection covers the default Windows install paths; on
+  Linux/macOS or a non-standard install set `DSH_BROWSER_PATH=/path/to/chrome`. A desktop display
+  is required for the visible window — headless servers should use pods.
+- **MCP ports (loopback by default):** `8787` control/MCP, `5902+` VNC, `6082+` noVNC, `9223+` CDP.
+  Set `MCP_TOKEN` before exposing the control plane beyond loopback.
+
+Quick installs:
+
+```bash
+# plugin only
+dsh plugin --profile web add github:nicken/dsh-browser-use
+
+# MCP only
+cd mcp && docker compose up -d --build
+curl -s http://127.0.0.1:8787/healthz
+```
 
 ---
 
@@ -381,6 +400,8 @@ for prerequisites and what each test covers.
 | Document | Contents |
 |---|---|
 | [docs/POSITIONING.md](docs/POSITIONING.md) | How the plugin and the MCP server relate, and which one should own which task |
+| [docs/DEPLOYMENT-FORMS.md](docs/DEPLOYMENT-FORMS.md) | Plugin only vs MCP only vs integrated (one model-visible browser object): proposal and migration path |
+| [docs/TOOL-SURFACE.md](docs/TOOL-SURFACE.md) | Proposal to collapse 6 tools into one facade tool plus an opt-in advanced switch |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Plugin internals (CDP, observation, refs, safety, routes) and MCP internals (pods, recording, HTTP) |
 | [docs/SECURITY.md](docs/SECURITY.md) | Threat models, defaults and deployment recommendations for both components |
 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Local setup, directory map, MCP subtree workflow, releases |
