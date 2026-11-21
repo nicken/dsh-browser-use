@@ -1,5 +1,5 @@
 /**
- * Browser control — Web client half of @local/dsh-browser-use.
+ * Browser control — Web client half of dsh-browser-use.
  *
  * Registers the 浏览器 Conversation tab (with its per-session on/off switch),
  * the composer browser status chip and one lightweight card per browser tool.
@@ -7,7 +7,7 @@
  * renders and calls the authenticated /api/browser-use routes.
  */
 window.__ModuleLoader__.load({
-  id: '@local/dsh-browser-use',
+  id: 'dsh-browser-use',
   factory(require) {
     const React = require('react')
     const h = React.createElement
@@ -1349,8 +1349,8 @@ window.__ModuleLoader__.load({
         ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'browser-use: dictionaries')
         ctx.effect(() => {
           const tag = document.createElement('style')
-          tag.dataset.plugin = '@local/dsh-browser-use'
-          tag.dataset.pluginCss = '@local/dsh-browser-use/client.css'
+          tag.dataset.plugin = 'dsh-browser-use'
+          tag.dataset.pluginCss = 'dsh-browser-use/client.css'
           tag.textContent = CSS
           document.head.appendChild(tag)
           return () => tag.remove()

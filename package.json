@@ -20,7 +20,8 @@
     "README.zh-CN.md",
     "LICENSE",
     "CREDITS.md",
-    "docs/"
+    "docs/",
+    "SECURITY.md"
   ],
   "dsh": {
     "bundle": {

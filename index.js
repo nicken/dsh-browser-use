@@ -64,7 +64,7 @@ const DANGEROUS_DOWNLOAD_PATTERN = /\.(exe|msi|bat|cmd|ps1|vbs|apk|dmg|iso|scr|j
 // browser plugin may own it. Report the seam and the competing plugins instead
 // of guessing an owner.
 const PROVIDER_SLOT = 'browserUse'
-const SELF_MODULE_NAME = '@local/dsh-browser-use'
+const SELF_MODULE_NAME = 'dsh-browser-use'
 const COMPETING_PROVIDER_RE =
   /browser[-_. ]?use|builtin[-_. ]?browser|visual[-_. ]?browser|inner[-_. ]?browser|bridge[-_. ]?browser|dsh-browser/i
 

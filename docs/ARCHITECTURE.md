@@ -279,7 +279,7 @@ is what the composer chip and the Browser tab poll (every 10 s).
 ### 1.12 Web client
 
 `client.js` is a DSH Web client module loaded via `window.__ModuleLoader__` with id
-`@local/dsh-browser-use`. It registers, all under its own locale namespace `browserUse`:
+`dsh-browser-use`. It registers, all under its own locale namespace `browserUse`:
 
 - **Six tool views** on `tool.call.toolview` (`browser_open`, `browser_observe`, `browser_act`,
   `browser_read`, `browser_session`, `browser_evidence`) — cards driven entirely by the Host's

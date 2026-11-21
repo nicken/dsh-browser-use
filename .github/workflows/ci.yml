@@ -33,6 +33,8 @@ jobs:
 
       # The plugin has no runtime dependencies, but the tests use Playwright.
       - name: Install dependencies
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
         run: npm ci --no-audit --no-fund
 
       - name: Install Xvfb
@@ -67,6 +69,8 @@ jobs:
           node-version: 22
 
       - name: Install dependencies
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
         run: npm ci --no-audit --no-fund
 
       - name: Install Xvfb
