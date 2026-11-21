@@ -21,7 +21,8 @@
     "LICENSE",
     "CREDITS.md",
     "docs/",
-    "SECURITY.md"
+    "SECURITY.md",
+    "CHANGELOG.md"
   ],
   "dsh": {
     "bundle": {
