@@ -1,8 +1,9 @@
 # Tool surface: fewer capability switches, same power
 
-Status: **proposal** (2026-11-21). Nothing here is implemented yet; the current plugin still
-registers six tools under the single `browserUse` switch, and `computer-use` registers two under
-`computerUse`.
+Status: **implemented** (2026-11-21, unreleased). The default surface is one facade `browser` tool;
+the six granular tools are registered only when `browserUseAdvanced` is on. `dsh-computer-use`
+applies the same pattern (`computer` includes `action:"screenshot"`; `computer_screenshot` is
+advanced-only).
 
 ## The problem
 

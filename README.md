@@ -1,5 +1,7 @@
 # dsh-browser-use
 
+English | [简体中文](README.zh-CN.md)
+
 **Agent browser control for DeepSeek Harness (DSH): a lean per-session plugin plus a self-hosted MCP browser sandbox.**
 
 This repository ships two independent pieces that solve the same problem at different trust levels:
@@ -210,7 +212,15 @@ node scripts/interact-test.mjs   # click / type / eval / snapshot round trip
 
 ## Tools
 
-### Plugin tools (6)
+### Plugin tool surface
+
+**Default surface: one tool.** Unless the per-session *advanced* switch is on, the plugin registers a
+single `browser` tool that multiplexes the six actions:
+`browser({action:"open"})`, `observe`, `act` (with `act:"click"` etc.), `read`, `session` (with
+`op:"status"`) and `evidence`. Turn on *Advanced tool surface* in the Browser tab when you need the
+granular tools below (scripts, compatibility, or very explicit tool traces).
+
+#### Granular tools (advanced switch only)
 
 | Tool | Purpose | Key arguments |
 |---|---|---|
@@ -296,7 +306,20 @@ the approval prompt is open.
 | `browser-use/pause.json` | Pause record written by the user or the model; its presence blocks browser tools |
 | `browser-use/audit.jsonl` | Append-only audit trail; typed text is never stored |
 | `browser-use/shots/` | Screenshots kept for evidence and approval (40 most recent) |
-| `capability-toggles.json` | Per-session switches shared with other capability plugins |
+| `capability-toggles.json` | Per-session switches shared with other capability plugins (`browserUse`, `browserUseAdvanced`) |
+| `browser-use/policy.json` `observationTtlMs` | (plugin-level, optional) observation lifetime when the host exposes it |
+
+#### Engine (deployment form C1)
+
+| Environment variable | Default | Meaning |
+|---|---|---|
+| `DSH_BROWSER_ENGINE` | `local` | `local` launches Edge/Chrome; `pod` asks browser-pods for a sandbox; `auto` tries the pod first and falls back to local |
+| `DSH_BROWSER_POD_URL` | `http://127.0.0.1:8787` | browser-pods control plane |
+| `DSH_BROWSER_POD_TOKEN` | empty | bearer token when `MCP_TOKEN` is set on the pod server |
+| `DSH_BROWSER_POD_PROFILE` | empty | named pod profile (login state) |
+| `DSH_BROWSER_POD_TTL_MIN` | server default | idle TTL passed to the pod |
+| `DSH_BROWSER_POD_KEEP` | `0` | `1` leaves the pod running after the session closes |
+| `DSH_BROWSER_ALLOW_REMOTE_CDP` | `0` | allow `browser(open, cdp_url)` beyond loopback (off by default) |
 
 Environment variables read by the plugin:
 

@@ -3,6 +3,20 @@
 All notable changes to this repository are documented here. The plugin
 (`dsh-browser-use`) and the MCP server (`mcp/`, `browser-pods`) version independently.
 
+## Unreleased
+
+- **Deployment form C1 — pod engine.** `DSH_BROWSER_ENGINE=pod` (or `auto`) makes the plugin create
+  a browser-pods sandbox through its REST API and drive it over CDP; the model still sees only the
+  plugin's browser tools. `browser_open({ cdp_url })` / `browser({action:"open", cdp_url})` also
+  attach to any existing CDP endpoint (loopback by default). Pod sessions report `pod.id` and
+  `live_view_url` in `browser_session status`, and close/detach archives the pod.
+- **Single tool surface by default.** The plugin now registers one `browser` tool
+  (`action: open | observe | act | read | session | evidence`); the six granular tools are only
+  registered when the per-session `browserUseAdvanced` switch is on. The Browser tab exposes both
+  switches.
+- Tests: facade dispatch, advanced-switch gating, pod failure modes (`pod_unavailable`, `pod_auth`,
+  `pod_refused`, `auto` fallback) and CDP attach/detach coverage.
+
 ## 0.2.0 — 2026-11-21
 
 First open-source release. The plugin was previously developed privately as

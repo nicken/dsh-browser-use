@@ -12,6 +12,7 @@ export const SESSION = 'test-session';
 
 export async function createHarness({
   browserUse = true,
+  advanced = false,
   policy = null,
   approvalOutcome = 'allowed-once',
   approvalPolicy = 'standard',
@@ -22,11 +23,11 @@ export async function createHarness({
   mkdirSync(join(dshHome, 'browser-use'), { recursive: true });
   writeFileSync(
     join(dshHome, 'capability-toggles.json'),
-    JSON.stringify({ version: 1, sessions: { [SESSION]: { browserUse } } }),
+    JSON.stringify({ version: 1, sessions: { [SESSION]: { browserUse, browserUseAdvanced: advanced } } }),
   );
   if (policy) writeFileSync(join(dshHome, 'browser-use', 'policy.json'), JSON.stringify(policy));
 
-  const tools = new Map();
+  const tools = new Map(); // name -> { def, when }
   const routes = [];
   const disposers = [];
   const approval = {
@@ -41,8 +42,8 @@ export async function createHarness({
 
   const ctx = {
     tools: {
-      register(def) {
-        tools.set(def.name, def);
+      register(def, options = {}) {
+        tools.set(def.name, { def, when: options?.when });
         return () => tools.delete(def.name);
       },
     },
@@ -78,11 +79,21 @@ export async function createHarness({
     tools,
     routes,
     exec,
-    /** 调用已注册的工具，等价于 host 的 tool.execute */
+    /** 当前会话可见的工具名（模拟 host 对 when 谓词的求值） */
+    visibleTools(agent = exec.agent) {
+      return [...tools.entries()]
+        .filter(([, entry]) => typeof entry.when !== 'function' || entry.when({ agent }))
+        .map(([name]) => name)
+        .sort();
+    },
+    /** 调用已注册的工具，等价于 host 的 tool.execute（不可见的工具会被拒绝） */
     call(name, args = {}) {
-      const def = tools.get(name);
-      if (!def) throw new Error(`tool ${name} is not registered`);
-      return def.execute(args, exec);
+      const entry = tools.get(name);
+      if (!entry) throw new Error(`tool ${name} is not registered`);
+      if (typeof entry.when === 'function' && !entry.when({ agent: exec.agent })) {
+        throw new Error(`tool ${name} is not visible for this session`);
+      }
+      return entry.def.execute(args, exec);
     },
     cleanup() {
       for (const dispose of disposers.reverse()) {

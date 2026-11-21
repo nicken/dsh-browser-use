@@ -61,6 +61,13 @@ window.__ModuleLoader__.load({
       browserCapabilityFailed: '开关保存失败',
       browserCapabilityLoading: '正在读取开关状态…',
       browserCapabilitySwitch: '浏览器控制开关',
+      browserAdvancedOff: '高级工具面：关（默认只有 1 个 browser 工具）',
+      browserAdvancedOn: '高级工具面：开（6 个细分工具）',
+      browserAdvancedHint: '需要 browser_open / browser_act 等细分工具时再打开；默认单一 browser 工具更省心。',
+      browserAdvancedEnable: '开启高级工具面',
+      browserAdvancedDisable: '关闭高级工具面',
+      browserAdvancedSwitch: '高级工具面开关',
+      browserCardTitle: '浏览器',
     }
 
     const en = {
@@ -105,6 +112,13 @@ window.__ModuleLoader__.load({
       browserCapabilityFailed: 'Could not save the switch',
       browserCapabilityLoading: 'Reading the switch state…',
       browserCapabilitySwitch: 'Browser control switch',
+      browserAdvancedOff: 'Advanced tool surface: off (one browser tool)',
+      browserAdvancedOn: 'Advanced tool surface: on (6 granular tools)',
+      browserAdvancedHint: 'Turn on only when you need browser_open / browser_act and friends; the default single browser tool is simpler.',
+      browserAdvancedEnable: 'Turn advanced tool surface on',
+      browserAdvancedDisable: 'Turn advanced tool surface off',
+      browserAdvancedSwitch: 'Advanced tool surface switch',
+      browserCardTitle: 'Browser',
     }
 
 
@@ -334,6 +348,7 @@ window.__ModuleLoader__.load({
 .msm-mkt-diagnostic pre{margin:6px 0 0;max-height:180px;overflow:auto;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:10px;line-height:15px;color:var(--dsw-alias-label-secondary);white-space:pre-wrap;overflow-wrap:anywhere}
 @media (max-width:640px){.msm-grid-2{grid-template-columns:1fr}.msm-page{padding:0 16px 32px}}
 .msm-cap-bar{box-sizing:border-box;display:flex;align-items:center;justify-content:space-between;gap:16px;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;background:var(--dsw-alias-bg-layer-1);padding:10px 14px}
+.msm-cap-stack{display:flex;flex-direction:column;gap:6px;width:100%}
 .msm-cap-bar[data-on="true"]{border-color:var(--dsw-alias-brand-primary)}
 .msm-cap-bar[data-stale="true"]{opacity:.7}
 .msm-cap-bar-text{display:flex;flex-direction:column;gap:2px;min-width:0}
@@ -428,7 +443,7 @@ window.__ModuleLoader__.load({
       if (!response.ok) throw new Error(hostReason || `HTTP ${response.status} ${response.statusText}`)
       if (!payload || payload.ok !== true) throw new Error(hostReason || 'The browser-use capability route rejected the request.')
       const value = payload.value && typeof payload.value === 'object' ? payload.value : payload
-      return { enabled: value.enabled === true }
+      return { enabled: value.enabled === true, advanced: value.advanced === true }
     }
 
     function messageOf(error) {
@@ -481,17 +496,15 @@ window.__ModuleLoader__.load({
      * saved value "applies on the next step" so the delay is never a surprise.
      */
     function BrowserCapabilityBar({ t, sessionId }) {
-      const [state, setState] = React.useState({ enabled: null, stale: false, saving: false })
+      const [state, setState] = React.useState({ enabled: null, advanced: null, stale: false, saving: false, savingAdvanced: false })
       const [notice, setNotice] = React.useState('')
       const alive = React.useRef(true)
       const load = React.useCallback(async () => {
         if (typeof sessionId !== 'string' || sessionId === '') return
         try {
           const value = await browserCapability(undefined, sessionId)
-          if (alive.current) setState({ enabled: value.enabled === true, stale: false, saving: false })
+          if (alive.current) setState({ enabled: value.enabled === true, advanced: value.advanced === true, stale: false, saving: false, savingAdvanced: false })
         } catch {
-          // Unknown state: keep the bar visible but disable the switch instead
-          // of claiming the capability is off.
           if (alive.current) setState((current) => ({ ...current, stale: true }))
         }
       }, [sessionId])
@@ -504,47 +517,86 @@ window.__ModuleLoader__.load({
       }, [load])
 
       const enabled = state.enabled === true
+      const advanced = state.advanced === true
       const known = state.enabled !== null
-      const toggle = async () => {
-        if (!known || state.saving || state.stale || !sessionId) return
-        const next = !enabled
-        setState((current) => ({ ...current, saving: true }))
+      const save = async (patch, key) => {
+        if (!known || state.stale || !sessionId) return
+        setState((current) => ({ ...current, [key]: true }))
         setNotice('')
         try {
-          const value = await browserCapability({ sessionId, enabled: next }, sessionId)
+          const value = await browserCapability({ sessionId, ...patch }, sessionId)
           if (!alive.current) return
-          setState({ enabled: value.enabled === true, stale: false, saving: false })
+          setState({
+            enabled: value.enabled === true,
+            advanced: value.advanced === true,
+            stale: false,
+            saving: false,
+            savingAdvanced: false,
+          })
           setNotice(t('browserCapabilityPending'))
         } catch (error) {
           if (!alive.current) return
-          setState((current) => ({ ...current, saving: false }))
+          setState((current) => ({ ...current, [key]: false }))
           setNotice(`${t('browserCapabilityFailed')} — ${messageOf(error)}`)
         }
       }
+      const toggle = () => save({ enabled: !enabled }, 'saving')
+      const toggleAdvanced = () => save({ advanced: !advanced }, 'savingAdvanced')
 
       const label = !known ? t('browserCapabilityLoading') : enabled ? t('browserCapabilityOn') : t('browserCapabilityOff')
       const hint = notice || (state.stale ? t('browserStatusOffline') : t('browserCapabilityHint'))
+      const advancedLabel = !known ? t('browserCapabilityLoading') : advanced ? t('browserAdvancedOn') : t('browserAdvancedOff')
       return h(
         'div',
-        {
-          className: 'msm-cap-bar',
-          'data-on': enabled ? 'true' : 'false',
-          'data-stale': state.stale ? 'true' : undefined,
-          role: 'group',
-          'aria-label': t('browserCapabilitySwitch'),
-        },
+        { className: 'msm-cap-stack', key: 'cap-stack' },
         h(
           'div',
-          { className: 'msm-cap-bar-text' },
-          h('span', { className: 'msm-cap-bar-label' }, label),
-          h('span', { className: 'msm-cap-bar-hint' }, hint),
+          {
+            className: 'msm-cap-bar',
+            'data-on': enabled ? 'true' : 'false',
+            'data-stale': state.stale ? 'true' : undefined,
+            role: 'group',
+            'aria-label': t('browserCapabilitySwitch'),
+            key: 'control-bar',
+          },
+          h(
+            'div',
+            { className: 'msm-cap-bar-text', key: 'control-text' },
+            h('span', { className: 'msm-cap-bar-label' }, label),
+            h('span', { className: 'msm-cap-bar-hint' }, hint),
+          ),
+          h(Switch, {
+            key: 'control-switch',
+            checked: enabled,
+            disabled: !known || state.saving || state.stale,
+            label: enabled ? t('browserCapabilityDisable') : t('browserCapabilityEnable'),
+            onToggle: () => void toggle(),
+          }),
         ),
-        h(Switch, {
-          checked: enabled,
-          disabled: !known || state.saving || state.stale,
-          label: enabled ? t('browserCapabilityDisable') : t('browserCapabilityEnable'),
-          onToggle: () => void toggle(),
-        }),
+        h(
+          'div',
+          {
+            className: 'msm-cap-bar',
+            'data-on': advanced ? 'true' : 'false',
+            'data-stale': state.stale ? 'true' : undefined,
+            role: 'group',
+            'aria-label': t('browserAdvancedSwitch'),
+            key: 'advanced-bar',
+          },
+          h(
+            'div',
+            { className: 'msm-cap-bar-text', key: 'advanced-text' },
+            h('span', { className: 'msm-cap-bar-label' }, advancedLabel),
+            h('span', { className: 'msm-cap-bar-hint' }, t('browserAdvancedHint')),
+          ),
+          h(Switch, {
+            key: 'advanced-switch',
+            checked: advanced,
+            disabled: !known || !enabled || state.savingAdvanced || state.stale,
+            label: advanced ? t('browserAdvancedDisable') : t('browserAdvancedEnable'),
+            onToggle: () => void toggleAdvanced(),
+          }),
+        ),
       )
     }
 
@@ -894,6 +946,36 @@ window.__ModuleLoader__.load({
             { className: cx('msm-tool-pre', expanded ? 'is-expanded' : null), key: 'rendered' },
             text,
           )
+        },
+      })
+    }
+
+    /** One generic card for the unified `browser` facade tool. */
+    function BrowserFacadeToolView({ t, phase, block }) {
+      return h(BrowserCard, {
+        t,
+        phase,
+        block,
+        title: t('browserCardTitle'),
+        headExtras: (meta, done, refused) => {
+          if (!done || refused) return null
+          const pageTitle = browserClip(browserString(meta && meta.title), 90)
+          const host = browserHost(meta && meta.url)
+          const pod = meta && meta.pod && typeof meta.pod === 'object' ? meta.pod : null
+          const liveView = pod && typeof pod.live_view_url === 'string' ? pod.live_view_url : ''
+          return [
+            meta && typeof meta.mode === 'string' ? h('span', { className: 'msm-tool-chip', key: 'mode' }, meta.mode) : null,
+            pageTitle ? h('span', { className: 'msm-tool-sub', key: 'page' }, pageTitle) : null,
+            host ? h('span', { className: 'msm-tool-chip', key: 'host' }, host) : null,
+            liveView
+              ? h('a', { className: 'msm-tool-chip', key: 'pod', href: liveView, target: '_blank', rel: 'noreferrer' }, 'live view')
+              : null,
+          ]
+        },
+        renderBody: (meta) => {
+          const rendered = browserRendered(meta)
+          if (!rendered) return null
+          return h('pre', { className: 'msm-tool-pre', key: 'rendered' }, browserClip(rendered, 1200))
         },
       })
     }
@@ -1361,6 +1443,7 @@ window.__ModuleLoader__.load({
         // One lightweight card per browser tool, driven only by the
         // presentationMeta the Host half supplies.
         ctx.slots.inject('tool.call.toolview', function* () {
+          yield ctx.slots.register({ name: 'tool.call.toolview', key: 'browser', locale: NS }, BrowserFacadeToolView)
           yield ctx.slots.register({ name: 'tool.call.toolview', key: 'browser_open', locale: NS }, BrowserOpenToolView)
           yield ctx.slots.register({ name: 'tool.call.toolview', key: 'browser_observe', locale: NS }, BrowserObserveToolView)
           yield ctx.slots.register({ name: 'tool.call.toolview', key: 'browser_act', locale: NS }, BrowserActToolView)

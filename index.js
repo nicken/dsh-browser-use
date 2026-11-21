@@ -273,6 +273,13 @@ function capabilityEnabledFor(sessionId) {
   return record !== undefined && record !== null && typeof record === 'object' && record.browserUse === true
 }
 
+/** Whether the user enabled the advanced (granular) tool surface for one Session. */
+function capabilityAdvancedFor(sessionId) {
+  if (!sessionId) return false
+  const record = readCapabilityStore().sessions[sessionId]
+  return record !== undefined && record !== null && typeof record === 'object' && record.browserUseAdvanced === true
+}
+
 /**
  * Replace the store atomically: a unique temp file beside the target, then a
  * rename, so a concurrent reader never sees a half-written JSON document.
@@ -630,10 +637,40 @@ class BrowserInstance {
     this.consoleBuffer = []
     this.networkBuffer = []
     this.networkById = new Map()
+    this.mode = 'local'
+    this.cdpUrl = null
+    this.pod = null
   }
 
   touch() {
     this.lastUsedAt = Date.now()
+  }
+
+  /**
+   * Attach to an existing CDP endpoint instead of spawning a browser.
+   * Used by the pod engine (C1) and by browser_open({ cdp_url }).
+   */
+  async attach(cdpUrl) {
+    const raw = String(cdpUrl || '').trim()
+    if (!raw) throw new Error('cdp_url is empty')
+    let wsUrl = ''
+    if (/^wss?:\/\//i.test(raw)) {
+      wsUrl = raw
+    } else if (/^https?:\/\//i.test(raw)) {
+      const base = raw.replace(/\/+$/, '')
+      const response = await fetch(`${base}/json/version`, { signal: AbortSignal.timeout(10_000) })
+      if (!response.ok) throw new Error(`the CDP endpoint answered ${response.status}`)
+      const info = await response.json()
+      wsUrl = String(info?.webSocketDebuggerUrl || '')
+      if (!wsUrl) throw new Error('the CDP endpoint did not return webSocketDebuggerUrl')
+    } else {
+      throw new Error('cdp_url must be an http(s):// or ws(s):// URL')
+    }
+    this.mode = 'attached'
+    this.cdpUrl = raw
+    this.client = new CdpClient(wsUrl)
+    await this.client.open()
+    await this.attachPage()
   }
 
   async start() {
@@ -1104,10 +1141,14 @@ class BrowserInstance {
 
   async close() {
     this.closed = true
-    try {
-      await this.client?.send('Browser.close')
-    } catch {
-      // Browser.close is best effort.
+    // An attached browser belongs to someone else (a pod or an external
+    // Chrome): detach instead of shutting it down.
+    if (this.mode !== 'attached') {
+      try {
+        await this.client?.send('Browser.close')
+      } catch {
+        // Browser.close is best effort.
+      }
     }
     try {
       this.client?.close()
@@ -1149,7 +1190,7 @@ function pruneShots() {
   }
 }
 
-async function instanceFor(sessionId, { create }) {
+async function instanceFor(sessionId, { create, attachUrl = null, pod = null } = {}) {
   const existing = instances.get(sessionId)
   if (existing && !existing.closed) {
     existing.touch()
@@ -1161,7 +1202,12 @@ async function instanceFor(sessionId, { create }) {
   }
   const instance = new BrowserInstance(sessionId)
   try {
-    await instance.start()
+    if (attachUrl) {
+      await instance.attach(attachUrl)
+      instance.pod = pod
+    } else {
+      await instance.start()
+    }
   } catch (error) {
     try {
       await instance.close()
@@ -1243,6 +1289,180 @@ function lineOfObservation(observation) {
 // Tools
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Pod engine (deployment form C1)
+// ---------------------------------------------------------------------------
+//
+// The plugin can drive a browser-pods Chromium instead of a local browser.
+// Control goes through the browser-pods REST API (plain fetch, no MCP client);
+// pages are then driven over CDP exactly like a local browser.
+
+function browserEngine() {
+  const value = String(process.env.DSH_BROWSER_ENGINE || 'local').trim().toLowerCase()
+  return ['local', 'pod', 'auto'].includes(value) ? value : 'local'
+}
+
+function podConfig() {
+  return {
+    url: String(process.env.DSH_BROWSER_POD_URL || 'http://127.0.0.1:8787').replace(/\/+$/, ''),
+    token: String(process.env.DSH_BROWSER_POD_TOKEN || ''),
+    profile: String(process.env.DSH_BROWSER_POD_PROFILE || ''),
+    ttlMinutes: Number(process.env.DSH_BROWSER_POD_TTL_MIN || '') || null,
+    keep: process.env.DSH_BROWSER_POD_KEEP === '1',
+  }
+}
+
+function podError(code, message, guidance) {
+  const error = new Error(message)
+  error.podCode = code
+  error.podGuidance = guidance
+  return error
+}
+
+async function podRequest(method, path, body) {
+  const config = podConfig()
+  const headers = { accept: 'application/json' }
+  if (body !== undefined) headers['content-type'] = 'application/json'
+  if (config.token) headers.authorization = `Bearer ${config.token}`
+  let response
+  try {
+    response = await fetch(`${config.url}${path}`, {
+      method,
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: AbortSignal.timeout(20_000),
+    })
+  } catch (error) {
+    throw podError(
+      'pod_unavailable',
+      `The browser-pods control plane at ${config.url} is unreachable: ${messageOf(error).slice(0, 200)}`,
+      'Start browser-pods (cd mcp && docker compose up -d), set DSH_BROWSER_POD_URL, or use DSH_BROWSER_ENGINE=local.',
+    )
+  }
+  if (response.status === 401 || response.status === 403) {
+    throw podError('pod_auth', 'browser-pods rejected the bearer token.', 'Set DSH_BROWSER_POD_TOKEN to the same MCP_TOKEN as the server.')
+  }
+  const text = await response.text()
+  let payload = null
+  try {
+    payload = text ? JSON.parse(text) : null
+  } catch {
+    payload = null
+  }
+  if (!response.ok) {
+    throw podError(
+      'pod_refused',
+      `browser-pods answered ${response.status}: ${String(payload?.error || payload?.message || text).slice(0, 200)}`,
+      'Check browser-pods logs (docker logs browser-pods) and capacity (PODS_MAX).',
+    )
+  }
+  return payload
+}
+
+async function closePodBestEffort(podId, reason) {
+  if (!podId) return
+  try {
+    await podRequest('DELETE', `/api/pods/${encodeURIComponent(podId)}?reason=${encodeURIComponent(reason || 'dsh close')}`)
+  } catch {
+    // The pod may be gone already; nothing to do.
+  }
+}
+
+function podLabelFor(sessionId) {
+  return `dsh:${String(sessionId || '').slice(-12)}`
+}
+
+function loopbackHost(host) {
+  const value = String(host || '').toLowerCase()
+  return value === 'localhost' || value === '127.0.0.1' || value === '::1' || value === '[::1]'
+}
+
+/** Only loopback CDP endpoints (or the configured pod host) are attachable by default. */
+function cdpTargetAllowed(raw) {
+  if (process.env.DSH_BROWSER_ALLOW_REMOTE_CDP === '1') return true
+  try {
+    const target = new URL(raw)
+    if (loopbackHost(target.hostname)) return true
+    const podHost = new URL(podConfig().url).hostname
+    return target.hostname.toLowerCase() === podHost.toLowerCase()
+  } catch {
+    return false
+  }
+}
+
+async function openBrowserAttached(sessionId, admittedUrl, cdpUrl) {
+  if (!cdpTargetAllowed(cdpUrl)) {
+    return refusal(
+      'browser_open',
+      'cdp_not_allowed',
+      `Refusing to attach to ${cdpUrl}: only loopback CDP endpoints are allowed.`,
+      'Set DSH_BROWSER_ALLOW_REMOTE_CDP=1 if you really mean to attach to a remote CDP endpoint.',
+    )
+  }
+  let instance = null
+  try {
+    instance = await instanceFor(sessionId, { create: true, attachUrl: cdpUrl })
+  } catch (error) {
+    return refusal('browser_open', 'cdp_attach_failed', `Could not attach to ${cdpUrl}: ${messageOf(error).slice(0, 300)}`, 'Check that the browser has --remote-debugging-port enabled and the URL is reachable.')
+  }
+  if (instance && instance.error) {
+    return refusal('browser_open', instance.error, `At most ${MAX_INSTANCES} browsers may be open at once.`, 'Close another conversation browser.')
+  }
+  try {
+    const meta = await instance.navigate(admittedUrl)
+    return {
+      ok: true,
+      tool: 'browser_open',
+      mode: 'attached',
+      cdp_url: cdpUrl,
+      url: String(meta?.url ?? admittedUrl),
+      title: String(meta?.title ?? ''),
+      targetId: instance.targetId,
+      instances: instances.size,
+    }
+  } catch (error) {
+    await instance.close().catch(() => {})
+    return refusal('browser_open', 'cdp_error', `Navigation failed: ${messageOf(error).slice(0, 300)}`, 'Retry once; if it keeps failing, detach and reopen.')
+  }
+}
+
+async function openBrowserInPod(sessionId, admittedUrl) {
+  const config = podConfig()
+  let created = null
+  try {
+    created = await podRequest('POST', '/api/pods', {
+      label: podLabelFor(sessionId),
+      owner: 'dsh-browser-use',
+      ...(config.profile ? { profile: config.profile } : {}),
+      ...(config.ttlMinutes ? { ttl_minutes: config.ttlMinutes } : {}),
+    })
+    const cdpUrl = String(created?.cdp_url || '')
+    if (!cdpUrl) throw podError('pod_attach_failed', 'browser-pods did not return cdp_url.', 'Check the browser-pods version and logs.')
+    const instance = await instanceFor(sessionId, {
+      create: true,
+      attachUrl: cdpUrl,
+      pod: { id: String(created?.id || ''), liveViewUrl: String(created?.live_view_url || ''), baseUrl: config.url, keep: config.keep },
+    })
+    if (instance && instance.error) throw podError('pod_refused', `At most ${MAX_INSTANCES} browsers may be open at once.`, 'Close another conversation browser.')
+    const meta = await instance.navigate(admittedUrl)
+    await instance.page('Page.bringToFront').catch(() => {})
+    return {
+      ok: true,
+      tool: 'browser_open',
+      mode: 'pod',
+      url: String(meta?.url ?? admittedUrl),
+      title: String(meta?.title ?? ''),
+      targetId: instance.targetId,
+      instances: instances.size,
+      pod: { id: instance.pod?.id || '', live_view_url: instance.pod?.liveViewUrl || '' },
+    }
+  } catch (error) {
+    if (created?.id) await closePodBestEffort(created.id, 'dsh-browser-use open failed')
+    const code = error?.podCode || 'pod_attach_failed'
+    return refusal('browser_open', code, messageOf(error).slice(0, 400), error?.podGuidance || 'Retry, or set DSH_BROWSER_ENGINE=local to use a local browser.')
+  }
+}
+
 async function browserOpen(ctx, exec, args) {
   const sessionId = sessionIdOf(exec?.agent)
   if (!sessionId) return refusal('browser_open', 'no_session', 'browser_open was called without a conversation.', 'Call it from a conversation.')
@@ -1250,6 +1470,19 @@ async function browserOpen(ctx, exec, args) {
   if (paused) return paused
   const admitted = admitUrl(args?.url)
   if (!admitted.ok) return admitted
+
+  const cdpUrl = typeof args?.cdp_url === 'string' ? args.cdp_url.trim() : ''
+  if (cdpUrl) return await openBrowserAttached(sessionId, admitted.url, cdpUrl)
+
+  const engine = browserEngine()
+  if (engine !== 'local') {
+    const attempt = await openBrowserInPod(sessionId, admitted.url)
+    if (attempt.ok) return attempt
+    if (engine === 'pod') return attempt
+    // engine=auto: fall through to a local browser, but tell the model why.
+    if (attempt.code !== 'too_many_instances') attempt.engineNote = `pod engine unavailable (${attempt.code}); used the local browser`
+  }
+
   let instance = null
   try {
     instance = await instanceFor(sessionId, { create: true })
@@ -1267,6 +1500,8 @@ async function browserOpen(ctx, exec, args) {
     return {
       ok: true,
       tool: 'browser_open',
+      mode: instance.mode,
+      ...(instance.pod ? { pod: { id: instance.pod.id, live_view_url: instance.pod.liveViewUrl } } : {}),
       url: String(meta?.url ?? admitted.url),
       title: String(meta?.title ?? ''),
       targetId: instance.targetId,
@@ -1705,7 +1940,8 @@ async function browserSession(ctx, exec, args) {
       }
       const idle = Math.round((Date.now() - entry.lastUsedAt) / 1000)
       const active = id === sessionId ? ` | active tab ${String(entry.targetId).slice(0, 12)}` : ''
-      lines.push(`- ${id === sessionId ? 'this conversation' : `${id.slice(0, 16)}…`} | idle ${idle}s | tabs ${tabs}${active} | ${url} | ${title}`)
+      const mode = entry.mode === 'attached' ? ` | ${entry.pod ? `pod ${entry.pod.id}` : 'attached'}` : ''
+      lines.push(`- ${id === sessionId ? 'this conversation' : `${id.slice(0, 16)}…`} | idle ${idle}s | tabs ${tabs}${active}${mode} | ${url} | ${title}`)
     }
     if (instances.size === 0) lines.push('(no browser open)')
     const provider = await browserProviderReport()
@@ -1724,6 +1960,15 @@ async function browserSession(ctx, exec, args) {
       instances: instances.size,
       ...(instance && typeof instance.targetId === 'string' && instance.targetId ? { tabId: instance.targetId } : {}),
       paused: pause.paused,
+      engine: browserEngine(),
+      ...(instance && !instance.closed
+        ? {
+            mode: instance.mode,
+            attached: instance.mode === 'attached',
+            ...(instance.cdpUrl ? { cdp_url: instance.cdpUrl } : {}),
+            ...(instance.pod ? { pod: { id: instance.pod.id, live_view_url: instance.pod.liveViewUrl } } : {}),
+          }
+        : {}),
       provider,
       rendered: lines.join('\n'),
     }
@@ -1731,8 +1976,22 @@ async function browserSession(ctx, exec, args) {
   if (!instance || instance.closed) {
     return { ok: true, tool: 'browser_session', action, sessionId, instances: instances.size, rendered: 'No browser was open for this conversation.' }
   }
+  const podId = instance.pod?.id && instance.pod.keep !== true ? instance.pod.id : ''
+  const mode = instance.mode
   await instance.close()
-  return { ok: true, tool: 'browser_session', action, sessionId, instances: instances.size, rendered: `Closed the browser for this conversation (${instances.size} left).` }
+  if (podId) await closePodBestEffort(podId, 'closed from DSH browser_session')
+  return {
+    ok: true,
+    tool: 'browser_session',
+    action,
+    sessionId,
+    instances: instances.size,
+    mode,
+    ...(podId ? { pod: { id: podId, closed: true } } : {}),
+    rendered: mode === 'attached'
+      ? `Detached from the browser for this conversation (${instances.size} left).`
+      : `Closed the browser for this conversation (${instances.size} left).`,
+  }
 }
 
 async function browserEvidence(ctx, exec, args) {
@@ -1956,7 +2215,7 @@ async function serveCapability(request) {
     if (request.method === 'GET') {
       const target = sessionKey(querySession)
       if (!target) return errorResponse('sessionId is required')
-      return jsonResponse({ enabled: capabilityEnabledFor(target) })
+      return jsonResponse({ enabled: capabilityEnabledFor(target), advanced: capabilityAdvancedFor(target) })
     }
     if (request.method !== 'POST') return errorResponse('method not allowed', 405)
     let body = null
@@ -1967,14 +2226,19 @@ async function serveCapability(request) {
     }
     const target = sessionKey(body?.sessionId) || sessionKey(querySession)
     if (!target) return errorResponse('sessionId is required')
-    if (typeof body?.enabled !== 'boolean') return errorResponse('enabled must be a boolean')
+    const wantsEnabled = typeof body?.enabled === 'boolean'
+    const wantsAdvanced = typeof body?.advanced === 'boolean'
+    if (!wantsEnabled && !wantsAdvanced) return errorResponse('enabled or advanced must be a boolean')
     const store = readCapabilityStore()
     const previous = store.sessions[target]
     const record = previous && typeof previous === 'object' && !Array.isArray(previous) ? previous : {}
     // Keep this session's other capability fields and every other session.
-    store.sessions[target] = { ...record, browserUse: body.enabled }
+    const next = { ...record }
+    if (wantsEnabled) next.browserUse = body.enabled
+    if (wantsAdvanced) next.browserUseAdvanced = body.advanced
+    store.sessions[target] = next
     await writeCapabilityStore(store)
-    return jsonResponse({ enabled: body.enabled })
+    return jsonResponse({ enabled: next.browserUse === true, advanced: next.browserUseAdvanced === true })
   } catch (error) {
     return errorResponse(messageOf(error), 500)
   }
@@ -2057,16 +2321,135 @@ export function apply(ctx) {
       }
     }, 'browser-use: routes')
   })
-  const when = ({ agent }) => browserUseEnabled(agent)
+  // Default surface: one `browser` facade tool. The granular tools are only
+  // registered when the user explicitly turns on the advanced switch, so the
+  // capability panel shows one capability instead of six.
+  const when = ({ agent }) => browserUseEnabled(agent) && !capabilityAdvancedFor(agent?.session?.id)
+  const whenAdvanced = ({ agent }) => browserUseEnabled(agent) && capabilityAdvancedFor(agent?.session?.id)
   ctx.effect(() => {
     const disposers = [
+      ctx.tools.register(
+        defineTool({
+          name: 'browser',
+          description:
+            'The conversation\'s browser (local Chrome/Edge, or a browser-pods sandbox when the pod engine is enabled). ' +
+            'One tool, one action per call: ' +
+            'open {url} → observe → act {act, ref} → read / evidence → session {op}. ' +
+            'Observe first: refs from observe are the cheapest way to act. ' +
+            'Risky actions go through user approval; passwords are never typed; certificate failures on pods return an actionable hint.',
+          parameters: {
+            type: 'object',
+            required: ['action'],
+            additionalProperties: false,
+            properties: {
+              action: { type: 'string', enum: ['open', 'observe', 'act', 'read', 'session', 'evidence'], description: 'What to do.' },
+              url: { type: 'string', description: 'open: absolute http(s) URL.' },
+              cdp_url: { type: 'string', description: 'open: attach to an existing CDP endpoint instead of launching a browser (loopback by default).' },
+              mode: { type: 'string', enum: ['controls', 'text', 'ax'], description: 'observe: controls (default), text or ax.' },
+              offset: { type: 'integer', description: 'observe: start offset.' },
+              limit: { type: 'integer', description: 'observe/evidence: maximum entries.' },
+              act: { type: 'string', enum: ['click', 'type', 'press', 'scroll', 'hover', 'select'], description: 'act: the action to perform.' },
+              ref: { type: 'string', description: 'act: a ref from observe.' },
+              locator: {
+                type: 'object',
+                additionalProperties: false,
+                description: 'act: fallback target {css} or {role,name}.',
+                properties: { css: { type: 'string' }, role: { type: 'string' }, name: { type: 'string' } },
+              },
+              text: { type: 'string', description: 'act(type): text to type.' },
+              keys: { type: 'string', description: 'act(press): key, e.g. "Enter".' },
+              deltaY: { type: 'integer', description: 'act(scroll): scroll delta (default 600).' },
+              option: { type: 'string', description: 'act(select): option value or label.' },
+              intent: { type: 'string', description: 'act: one short sentence describing the goal (used for risk grading and audit).' },
+              confirm_risk: { type: 'boolean', description: 'act: accept that a high-risk action goes through user approval.' },
+              query: { type: 'string', description: 'read: words to match against the page text.' },
+              maxChars: { type: 'integer', description: 'read: maximum characters to return.' },
+              op: { type: 'string', enum: ['status', 'tabs', 'switch', 'show', 'close', 'reset', 'pause'], description: 'session: operation.' },
+              tabId: { type: 'string', description: 'session(switch): tab id from session(tabs).' },
+              kind: { type: 'string', enum: ['screenshot', 'console', 'network'], description: 'evidence: what to collect (default screenshot).' },
+            },
+          },
+          output: {
+            schema: outputSchema({
+              action: { type: 'string' },
+              mode: { type: 'string' },
+              rendered: { type: 'string' },
+              url: { type: 'string' },
+              title: { type: 'string' },
+              pod: { type: 'object', additionalProperties: true },
+            }),
+            render: (_args, value) => [{ type: 'text', text: renderText(value) }],
+            presentationMeta: (_args, value) => ({
+              ok: value.ok !== false,
+              code: value.code ?? null,
+              message: value.message ?? null,
+              guidance: value.guidance ?? null,
+              mode: value.mode ?? null,
+              url: value.url ?? null,
+              title: value.title ?? null,
+              pod: value.pod ?? null,
+              rendered: typeof value.rendered === 'string' ? value.rendered : null,
+            }),
+          },
+          execute: async (args, exec) => {
+            const action = typeof args?.action === 'string' ? args.action : ''
+            let value
+            switch (action) {
+              case 'open':
+                value = await browserOpen(ctx, exec, { url: args.url, cdp_url: args.cdp_url })
+                break
+              case 'observe':
+                value = await browserObserve(ctx, exec, { mode: args.mode, offset: args.offset, limit: args.limit })
+                break
+              case 'act':
+                value = await browserAct(ctx, exec, {
+                  action: args.act,
+                  ref: args.ref,
+                  locator: args.locator,
+                  text: args.text,
+                  keys: args.keys,
+                  deltaY: args.deltaY,
+                  option: args.option,
+                  intent: args.intent,
+                  confirm_risk: args.confirm_risk,
+                })
+                break
+              case 'read':
+                value = await browserRead(ctx, exec, { query: args.query, maxChars: args.maxChars })
+                break
+              case 'session':
+                value = await browserSession(ctx, exec, { action: args.op, tabId: args.tabId })
+                break
+              case 'evidence':
+                value = await browserEvidence(ctx, exec, { kind: args.kind, limit: args.limit })
+                break
+              default:
+                return refusal('browser', 'invalid_args', 'action must be open, observe, act, read, session or evidence.', 'Pass one of the supported actions.')
+            }
+            auditBrowser(exec, 'browser', args, value)
+            return value
+          },
+        }),
+        { when },
+      ),
       ctx.tools.register(
         defineTool({
           name: 'browser_open',
           description:
             'Open a page in this conversation\'s own real browser (Microsoft Edge or Google Chrome, isolated profile). Only http(s) URLs are allowed. ' +
             'At most three browsers may be open at once; browsers close after 15 minutes idle. Call browser_observe next to see the page as numbered controls.',
-          parameters: { type: 'object', required: ['url'], additionalProperties: false, properties: { url: { type: 'string', description: 'Absolute http(s) URL to open.' } } },
+          parameters: {
+            type: 'object',
+            required: ['url'],
+            additionalProperties: false,
+            properties: {
+              url: { type: 'string', description: 'Absolute http(s) URL to open.' },
+              cdp_url: {
+                type: 'string',
+                description: 'Optional: attach to an existing CDP endpoint (http(s)://host:port or ws(s)://…) instead of launching a browser. Loopback only unless DSH_BROWSER_ALLOW_REMOTE_CDP=1.',
+              },
+            },
+          },
           output: {
             schema: outputSchema({ url: { type: 'string' }, title: { type: 'string' }, targetId: { type: 'string' }, instances: { type: 'integer' } }),
             render: (_args, value) => [{ type: 'text', text: renderText(value) }],
@@ -2086,7 +2469,7 @@ export function apply(ctx) {
             return value
           },
         }),
-        { when },
+        { when: whenAdvanced },
       ),
       ctx.tools.register(
         defineTool({
@@ -2133,7 +2516,7 @@ export function apply(ctx) {
           },
           execute: async (args, exec) => browserObserve(pluginContext, exec, args),
         }),
-        { when },
+        { when: whenAdvanced },
       ),
       ctx.tools.register(
         defineTool({
@@ -2191,7 +2574,7 @@ export function apply(ctx) {
             return value
           },
         }),
-        { when },
+        { when: whenAdvanced },
       ),
       ctx.tools.register(
         defineTool({
@@ -2231,7 +2614,7 @@ export function apply(ctx) {
           },
           execute: async (args, exec) => browserRead(pluginContext, exec, args),
         }),
-        { when },
+        { when: whenAdvanced },
       ),
       ctx.tools.register(
         defineTool({
@@ -2270,7 +2653,7 @@ export function apply(ctx) {
           },
           execute: async (args, exec) => browserSession(pluginContext, exec, args),
         }),
-        { when },
+        { when: whenAdvanced },
       ),
       ctx.tools.register(
         defineTool({
@@ -2317,7 +2700,7 @@ export function apply(ctx) {
             return value
           },
         }),
-        { when },
+        { when: whenAdvanced },
       ),
     ]
     return () => {
@@ -2328,7 +2711,11 @@ export function apply(ctx) {
     const timer = setInterval(() => {
       for (const [sessionId, instance] of instances) {
         if (Date.now() - instance.lastUsedAt <= IDLE_CLOSE_MS) continue
-        void instance.close().catch(() => {})
+        const podId = instance.pod?.id && instance.pod.keep !== true ? instance.pod.id : ''
+        void instance
+          .close()
+          .then(() => (podId ? closePodBestEffort(podId, 'idle timeout') : undefined))
+          .catch(() => {})
         instances.delete(sessionId)
       }
     }, IDLE_SWEEP_MS)

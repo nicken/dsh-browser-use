@@ -1,5 +1,7 @@
 # dsh-browser-use
 
+[English](README.md) | 简体中文
+
 **面向 DeepSeek Harness（DSH）的 agent 浏览器控制：一个轻量的按会话插件 + 一个自托管的 MCP 浏览器沙箱。**
 
 这个仓库包含两个相互独立、在**不同信任边界**上解决同一问题的组件：
@@ -197,7 +199,14 @@ node scripts/interact-test.mjs   # 点击 / 输入 / eval / 快照 全链路
 
 ## 工具清单
 
-### 插件工具（6 个）
+### 插件工具面
+
+**默认只有一个工具。** 未打开按会话的“高级工具面”开关时，插件只注册一个 `browser` 工具，
+通过动作复用六个能力：`browser({action:"open"})`、`observe`、`act`（如 `act:"click"`）、
+`read`、`session`（如 `op:"status"`）、`evidence`。需要下面的细分工具（脚本、兼容、更明确的
+工具轨迹）时，在「浏览器」tab 打开“高级工具面”。
+
+#### 细分工具（仅在高级开关下注册）
 
 | 工具 | 用途 | 主要参数 |
 |---|---|---|
@@ -283,7 +292,19 @@ pod 的 noVNC 画面；本地高风险动作会先高亮目标、截图，再等
 | `browser-use/pause.json` | 用户或模型写下的暂停记录；存在时阻断浏览器工具 |
 | `browser-use/audit.jsonl` | 追加式审计；输入的文本从不落盘 |
 | `browser-use/shots/` | 证据与审批用的截图（保留最近 40 张） |
-| `capability-toggles.json` | 与其他能力插件共用的按会话开关 |
+| `capability-toggles.json` | 与其他能力插件共用的按会话开关（`browserUse`、`browserUseAdvanced`） |
+
+#### 引擎（部署形态 C1）
+
+| 环境变量 | 默认 | 含义 |
+|---|---|---|
+| `DSH_BROWSER_ENGINE` | `local` | `local` 启动本机 Edge/Chrome；`pod` 向 browser-pods 申请沙箱；`auto` 先试 pod，失败回退本机 |
+| `DSH_BROWSER_POD_URL` | `http://127.0.0.1:8787` | browser-pods 控制面 |
+| `DSH_BROWSER_POD_TOKEN` | 空 | pod 服务端启用 `MCP_TOKEN` 时的 Bearer token |
+| `DSH_BROWSER_POD_PROFILE` | 空 | pod 命名 profile（保留登录态） |
+| `DSH_BROWSER_POD_TTL_MIN` | 服务端默认 | 传给 pod 的空闲回收分钟数 |
+| `DSH_BROWSER_POD_KEEP` | `0` | `1` 表示会话结束后保留 pod |
+| `DSH_BROWSER_ALLOW_REMOTE_CDP` | `0` | 允许 `browser(open, cdp_url)` 连接回环之外的 CDP（默认关闭） |
 
 插件读取的环境变量：
 

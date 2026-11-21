@@ -1,7 +1,9 @@
 # Deployment forms
 
-Status: **design proposal** (2026-11-21). Forms A and B are implemented today; form C is not.
-This document is the spec we would implement next, not a description of shipped behaviour.
+Status: **implemented (unreleased), form C1 phases 1–2** — 2026-11-21. Forms A and B are unchanged;
+form C is now available through `DSH_BROWSER_ENGINE=pod|auto`: the plugin creates a pod through the
+browser-pods REST API and drives it over CDP. `browser(open, cdp_url)` attach mode also works
+standalone. Phases 3–4 (UX polish, CI compose e2e) remain open.
 
 The same browser capability can be delivered in three ways. They differ in **who owns the
 browser** and in **what the model sees**.
