@@ -293,8 +293,12 @@ pod 的 noVNC 画面；本地高风险动作会先高亮目标、截图，再等
 | `browser-use/audit.jsonl` | 追加式审计；输入的文本从不落盘 |
 | `browser-use/shots/` | 证据与审批用的截图（保留最近 40 张） |
 | `capability-toggles.json` | 与其他能力插件共用的按会话开关（`browserUse`、`browserUseAdvanced`） |
+| `browser-use/engine.json` | 「浏览器」tab 里保存的 pod 引擎设置（`0600`，含 token 明文）；环境变量优先级更高 |
 
 #### 引擎（部署形态 C1）
+
+可以在**「浏览器」tab → 执行引擎**里直接配置（保存到 `~/.dsh/browser-use/engine.json`，权限 `0600`，
+下一步生效），也可以用环境变量；环境变量优先于文件：
 
 | 环境变量 | 默认 | 含义 |
 |---|---|---|

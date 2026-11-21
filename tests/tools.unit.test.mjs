@@ -230,3 +230,120 @@ test('pod 引擎：auto 在控制面不可用时回退本地并标注 engineNote
     h.cleanup();
   }
 });
+
+
+/* ---------------- engine settings (engine.json) ---------------- */
+
+async function engineRoute(h) {
+  const route = h.routes.find((entry) => entry.path === '/api/browser-use/engine');
+  assert.ok(route, 'engine route registered');
+  return route;
+}
+
+async function callEngine(h, { method = 'GET', body } = {}) {
+  const route = await engineRoute(h);
+  const response = await route.fetch(
+    new Request('http://localhost/api/browser-use/engine', {
+      method,
+      headers: body === undefined ? {} : { 'content-type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    }),
+  );
+  const payload = await response.json();
+  return { status: response.status, value: payload.value, ok: payload.ok, error: payload.error };
+}
+
+test('engine 设置：默认 local，token 不回显', async () => {
+  const h = await createHarness();
+  try {
+    const { value } = await callEngine(h);
+    assert.equal(value.engine, 'local');
+    assert.equal(value.tokenSet, false);
+    assert.equal(typeof value.podUrl, 'string');
+    assert.equal(Object.hasOwn(value, 'token'), false);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test('engine 设置：保存到 engine.json（0600），token 只回 tokenSet', async () => {
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const h = await createHarness();
+  try {
+    const saved = await callEngine(h, {
+      method: 'POST',
+      body: { engine: 'pod', podUrl: 'http://127.0.0.1:9999', token: 'secret-token', profile: 'demo', ttlMinutes: 30, keep: true },
+    });
+    assert.equal(saved.ok, true, JSON.stringify(saved));
+    assert.equal(saved.value.engine, 'pod');
+    assert.equal(saved.value.tokenSet, true);
+    assert.equal(Object.hasOwn(saved.value, 'token'), false);
+
+    const file = path.join(h.dshHome, 'browser-use', 'engine.json');
+    assert.equal(fs.existsSync(file), true);
+    const mode = fs.statSync(file).mode & 0o777;
+    assert.equal(mode, 0o600, `expected 0600, got ${mode.toString(8)}`);
+    const stored = JSON.parse(fs.readFileSync(file, 'utf8'));
+    assert.equal(stored.pod.token, 'secret-token');
+    assert.equal(stored.pod.url, 'http://127.0.0.1:9999');
+
+    const readBack = await callEngine(h);
+    assert.equal(readBack.value.tokenSet, true);
+    assert.equal(readBack.value.profile, 'demo');
+    assert.equal(readBack.value.ttlMinutes, 30);
+    assert.equal(readBack.value.keep, true);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test('engine 设置：环境变量覆盖文件并在 envOverrides 里报出来', async () => {
+  const h = await createHarness();
+  try {
+    await callEngine(h, { method: 'POST', body: { engine: 'pod', podUrl: 'http://127.0.0.1:9999' } });
+    await withEnv({ DSH_BROWSER_ENGINE: 'auto' }, async () => {
+      const { value } = await callEngine(h);
+      assert.equal(value.engine, 'auto');
+      assert.ok(value.envOverrides.includes('engine'));
+    });
+  } finally {
+    h.cleanup();
+  }
+});
+
+test('engine 设置：保存的 pod 配置会被工具读取（无环境变量也走 pod）', async () => {
+  const h = await createHarness();
+  try {
+    await withEnv({ DSH_BROWSER_ENGINE: undefined, DSH_BROWSER_POD_URL: undefined, DSH_BROWSER_POD_TOKEN: undefined }, async () => {
+      await callEngine(h, {
+        method: 'POST',
+        body: { engine: 'pod', podUrl: 'http://127.0.0.1:1' },
+      });
+      const result = await h.call('browser', { action: 'open', url: 'https://example.com/' });
+      assert.equal(result.ok, false);
+      assert.equal(result.code, 'pod_unavailable');
+    });
+  } finally {
+    h.cleanup();
+  }
+});
+
+test('engine 设置：测试连接返回可操作结果', async () => {
+  const server = await listen((req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, pods: 2, max: 6 }));
+  });
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const h = await createHarness();
+  try {
+    const tested = await callEngine(h, { method: 'POST', body: { action: 'test', podUrl: base } });
+    assert.equal(tested.ok, true);
+    assert.equal(tested.value.reachable, true);
+    assert.equal(tested.value.pods, 2);
+    assert.equal(tested.value.max, 6);
+  } finally {
+    h.cleanup();
+    await new Promise((resolve) => server.close(resolve));
+  }
+});

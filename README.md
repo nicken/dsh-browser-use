@@ -309,9 +309,14 @@ the approval prompt is open.
 | `browser-use/audit.jsonl` | Append-only audit trail; typed text is never stored |
 | `browser-use/shots/` | Screenshots kept for evidence and approval (40 most recent) |
 | `capability-toggles.json` | Per-session switches shared with other capability plugins (`browserUse`, `browserUseAdvanced`) |
+| `browser-use/engine.json` | Pod-engine settings saved from the Browser tab (`0600`; token included). Environment variables override it |
 | `browser-use/policy.json` `observationTtlMs` | (plugin-level, optional) observation lifetime when the host exposes it |
 
 #### Engine (deployment form C1)
+
+The engine can be configured in the **Browser tab → Execution engine** section (saved to
+`~/.dsh/browser-use/engine.json`, mode `0600`; applies on the next step) or through environment
+variables, which take precedence over the file:
 
 | Environment variable | Default | Meaning |
 |---|---|---|

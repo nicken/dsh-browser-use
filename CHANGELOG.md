@@ -5,6 +5,11 @@ All notable changes to this repository are documented here. The plugin
 
 ## Unreleased
 
+- **Engine settings UI.** The Browser tab now has an *Execution engine* section (engine, pod URL,
+  token, profile, TTL, keep, remote-CDP switch, test connection). Settings persist to
+  `~/.dsh/browser-use/engine.json` (0600), apply on the next step, and environment variables win.
+- **Engine settings API.** `GET/POST /api/browser-use/engine` (token masked as `tokenSet`);
+  `POST {action:"test"}` probes the control plane.
 - **Deployment form C1 — pod engine.** `DSH_BROWSER_ENGINE=pod` (or `auto`) makes the plugin create
   a browser-pods sandbox through its REST API and drive it over CDP; the model still sees only the
   plugin's browser tools. `browser_open({ cdp_url })` / `browser({action:"open", cdp_url})` also

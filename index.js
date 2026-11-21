@@ -21,6 +21,7 @@
  */
 import { spawn } from 'node:child_process'
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   readdirSync,
@@ -55,6 +56,7 @@ const NETWORK_BUFFER = 200
 const SHOT_ROUTE = '/api/browser-use/shot'
 const STATUS_ROUTE = '/api/browser-use/status'
 const CAPABILITY_ROUTE = '/api/browser-use/capability'
+const ENGINE_ROUTE = '/api/browser-use/engine'
 const SHOT_FILE_PATTERN = /^[A-Za-z0-9._-]+\.png$/
 const DOWNLOAD_FILE_PATTERN = /\.(zip|rar|7z|pdf|docx?|xlsx?|pptx?|csv|txt|png|jpe?g|gif|mp4|mp3)$/i
 const DANGEROUS_DOWNLOAD_PATTERN = /\.(exe|msi|bat|cmd|ps1|vbs|apk|dmg|iso|scr|jar)$/i
@@ -1297,18 +1299,127 @@ function lineOfObservation(observation) {
 // Control goes through the browser-pods REST API (plain fetch, no MCP client);
 // pages are then driven over CDP exactly like a local browser.
 
+const ENGINE_DEFAULTS = Object.freeze({
+  engine: 'local',
+  podUrl: 'http://127.0.0.1:8787',
+  podToken: '',
+  podProfile: '',
+  podTtlMinutes: null,
+  podKeep: false,
+  allowRemoteCdp: false,
+})
+
+const ENGINE_VALUES = ['local', 'pod', 'auto']
+
+function engineConfigPath() {
+  return join(dataDirectory(), 'engine.json')
+}
+
+function normalizePodUrl(value) {
+  try {
+    const url = new URL(String(value ?? '').trim())
+    if (!/^https?:$/.test(url.protocol)) return ''
+    return url.href.replace(/\/+$/, '')
+  } catch {
+    return ''
+  }
+}
+
+/** Persisted operator settings for the pod engine (tokens live here, mode 0600). */
+function readEngineConfig() {
+  const raw = readJsonFile(engineConfigPath())
+  const base = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}
+  const pod = base.pod && typeof base.pod === 'object' && !Array.isArray(base.pod) ? base.pod : {}
+  const engine = typeof base.engine === 'string' && ENGINE_VALUES.includes(base.engine.toLowerCase())
+    ? base.engine.toLowerCase()
+    : ENGINE_DEFAULTS.engine
+  const ttl = Number(pod.ttlMinutes)
+  return {
+    engine,
+    podUrl: normalizePodUrl(pod.url) || ENGINE_DEFAULTS.podUrl,
+    podToken: typeof pod.token === 'string' ? pod.token : '',
+    podProfile: typeof pod.profile === 'string' ? pod.profile.slice(0, 120) : '',
+    podTtlMinutes: Number.isFinite(ttl) && ttl > 0 ? Math.floor(ttl) : null,
+    podKeep: pod.keep === true,
+    allowRemoteCdp: base.allowRemoteCdp === true,
+  }
+}
+
+async function writeEngineConfig(config) {
+  const file = engineConfigPath()
+  mkdirSync(dirname(file), { recursive: true })
+  const temp = `${file}.${process.pid}.${Date.now()}.tmp`
+  const document = {
+    version: 1,
+    engine: config.engine,
+    pod: {
+      url: config.podUrl,
+      token: config.podToken,
+      profile: config.podProfile,
+      ttlMinutes: config.podTtlMinutes,
+      keep: config.podKeep,
+    },
+    allowRemoteCdp: config.allowRemoteCdp,
+  }
+  try {
+    await writeFile(temp, `${JSON.stringify(document, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 })
+    chmodSync(temp, 0o600)
+    await rename(temp, file)
+  } catch (error) {
+    try {
+      unlinkSync(temp)
+    } catch {
+      // The temp file may not exist; the original config is untouched.
+    }
+    throw error
+  }
+}
+
+/**
+ * Merge the persisted engine.json with environment overrides. Deployment env
+ * wins so an operator can pin the engine without touching the user's file.
+ */
+function effectiveEngineConfig() {
+  const file = readEngineConfig()
+  const overrides = []
+  const envEngine = String(process.env.DSH_BROWSER_ENGINE || '').trim().toLowerCase()
+  const engine = ENGINE_VALUES.includes(envEngine) ? (overrides.push('engine'), envEngine) : file.engine
+
+  const envUrl = normalizePodUrl(process.env.DSH_BROWSER_POD_URL || '')
+  const podUrl = envUrl ? (overrides.push('podUrl'), envUrl) : file.podUrl
+
+  const envToken = typeof process.env.DSH_BROWSER_POD_TOKEN === 'string' ? process.env.DSH_BROWSER_POD_TOKEN : ''
+  const podToken = envToken !== '' ? (overrides.push('podToken'), envToken) : file.podToken
+
+  const envProfile = typeof process.env.DSH_BROWSER_POD_PROFILE === 'string' ? process.env.DSH_BROWSER_POD_PROFILE : ''
+  const podProfile = envProfile !== '' ? (overrides.push('podProfile'), envProfile.slice(0, 120)) : file.podProfile
+
+  const envTtl = Number(process.env.DSH_BROWSER_POD_TTL_MIN || '')
+  const podTtlMinutes = Number.isFinite(envTtl) && envTtl > 0
+    ? (overrides.push('podTtlMinutes'), Math.floor(envTtl))
+    : file.podTtlMinutes
+
+  const envKeep = process.env.DSH_BROWSER_POD_KEEP
+  const podKeep = envKeep === undefined ? file.podKeep : (overrides.push('podKeep'), envKeep === '1')
+
+  const envRemote = process.env.DSH_BROWSER_ALLOW_REMOTE_CDP
+  const allowRemoteCdp = envRemote === undefined ? file.allowRemoteCdp : (overrides.push('allowRemoteCdp'), envRemote === '1')
+
+  return { engine, podUrl, podToken, podProfile, podTtlMinutes, podKeep, allowRemoteCdp, overrides }
+}
+
 function browserEngine() {
-  const value = String(process.env.DSH_BROWSER_ENGINE || 'local').trim().toLowerCase()
-  return ['local', 'pod', 'auto'].includes(value) ? value : 'local'
+  return effectiveEngineConfig().engine
 }
 
 function podConfig() {
+  const config = effectiveEngineConfig()
   return {
-    url: String(process.env.DSH_BROWSER_POD_URL || 'http://127.0.0.1:8787').replace(/\/+$/, ''),
-    token: String(process.env.DSH_BROWSER_POD_TOKEN || ''),
-    profile: String(process.env.DSH_BROWSER_POD_PROFILE || ''),
-    ttlMinutes: Number(process.env.DSH_BROWSER_POD_TTL_MIN || '') || null,
-    keep: process.env.DSH_BROWSER_POD_KEEP === '1',
+    url: config.podUrl,
+    token: config.podToken,
+    profile: config.podProfile,
+    ttlMinutes: config.podTtlMinutes,
+    keep: config.podKeep,
   }
 }
 
@@ -1413,7 +1524,7 @@ function loopbackHost(host) {
 
 /** Only loopback CDP endpoints (or the configured pod host) are attachable by default. */
 function cdpTargetAllowed(raw) {
-  if (process.env.DSH_BROWSER_ALLOW_REMOTE_CDP === '1') return true
+  if (effectiveEngineConfig().allowRemoteCdp) return true
   try {
     const target = new URL(raw)
     if (loopbackHost(target.hostname)) return true
@@ -2319,6 +2430,95 @@ async function serveCapability(request) {
   }
 }
 
+/** Settings view of the pod engine: the token is never returned, only `tokenSet`. */
+function enginePublicView() {
+  const config = effectiveEngineConfig()
+  return {
+    engine: config.engine,
+    podUrl: config.podUrl,
+    tokenSet: config.podToken !== '',
+    profile: config.podProfile,
+    ttlMinutes: config.podTtlMinutes,
+    keep: config.podKeep,
+    allowRemoteCdp: config.allowRemoteCdp,
+    envOverrides: config.overrides,
+    configPath: engineConfigPath(),
+  }
+}
+
+/**
+ * `GET  /api/browser-use/engine` → effective settings (token masked)
+ * `POST /api/browser-use/engine` → save a partial update (takes effect on the
+ *      next step, because every tool call re-reads the config)
+ * `POST {action:"test"}`         → probe the pod control plane
+ */
+async function serveEngine(request) {
+  try {
+    if (request.method === 'GET') return jsonResponse(enginePublicView())
+    if (request.method !== 'POST') return errorResponse('method not allowed', 405)
+    let body = null
+    try {
+      body = await request.json()
+    } catch {
+      body = null
+    }
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return errorResponse('a JSON body is required')
+
+    if (body.action === 'test') {
+      const config = effectiveEngineConfig()
+      const target = normalizePodUrl(body.podUrl) || config.podUrl
+      const token = typeof body.token === 'string' && body.token !== '' ? body.token : config.podToken
+      try {
+        const response = await fetch(`${target}/api/pods`, {
+          headers: token ? { authorization: `Bearer ${token}` } : {},
+          signal: AbortSignal.timeout(8_000),
+        })
+        const text = await response.text()
+        let payload = null
+        try {
+          payload = text ? JSON.parse(text) : null
+        } catch {
+          payload = null
+        }
+        if (!response.ok) {
+          return jsonResponse({ reachable: false, podUrl: target, status: response.status, error: String(payload?.error || payload?.message || text).slice(0, 200) })
+        }
+        return jsonResponse({ reachable: true, podUrl: target, status: response.status, pods: Number(payload?.pods) || 0, max: Number(payload?.max) || 0 })
+      } catch (error) {
+        return jsonResponse({ reachable: false, podUrl: target, error: messageOf(error).slice(0, 200) })
+      }
+    }
+
+    const current = readEngineConfig()
+    const next = { ...current }
+    if (body.engine !== undefined) {
+      const value = String(body.engine || '').trim().toLowerCase()
+      if (!ENGINE_VALUES.includes(value)) return errorResponse('engine must be local, pod or auto')
+      next.engine = value
+    }
+    if (body.podUrl !== undefined) {
+      const value = normalizePodUrl(body.podUrl)
+      if (!value) return errorResponse('podUrl must be an absolute http(s) URL')
+      next.podUrl = value
+    }
+    if (body.token !== undefined) {
+      if (typeof body.token !== 'string') return errorResponse('token must be a string')
+      next.podToken = body.token.trim()
+    }
+    if (body.profile !== undefined) next.podProfile = String(body.profile || '').trim().slice(0, 120)
+    if (body.ttlMinutes !== undefined) {
+      const value = Number(body.ttlMinutes)
+      next.podTtlMinutes = Number.isFinite(value) && value > 0 ? Math.floor(value) : null
+    }
+    if (body.keep !== undefined) next.podKeep = body.keep === true
+    if (body.allowRemoteCdp !== undefined) next.allowRemoteCdp = body.allowRemoteCdp === true
+    await writeEngineConfig(next)
+    return jsonResponse(enginePublicView())
+  } catch (error) {
+    return errorResponse(messageOf(error), 500)
+  }
+}
+
 async function serveShot(request) {  let file = ''
   try {
     file = new URL(request.url).searchParams.get('file') ?? ''
@@ -2389,6 +2589,12 @@ export function apply(ctx) {
           methods: ['GET', 'POST'],
           requestBody: 'buffered',
           fetch: (request) => serveCapability(request),
+        }),
+        inner.connection.fetch.register({
+          path: ENGINE_ROUTE,
+          methods: ['GET', 'POST'],
+          requestBody: 'buffered',
+          fetch: (request) => serveEngine(request),
         }),
       ]
       return () => {

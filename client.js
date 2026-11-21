@@ -68,6 +68,28 @@ window.__ModuleLoader__.load({
       browserAdvancedDisable: '关闭高级工具面',
       browserAdvancedSwitch: '高级工具面开关',
       browserCardTitle: '浏览器',
+      engineTitle: '执行引擎',
+      engineHint: '保存后下一步生效；环境变量优先于这里的设置。',
+      engineMode: '引擎',
+      engineLocal: '本机浏览器',
+      enginePod: 'browser-pods 沙箱',
+      engineAuto: '自动（pod 失败回退本机）',
+      enginePodUrl: '控制面地址',
+      engineToken: 'Bearer token',
+      engineTokenSet: '已保存，留空表示不修改',
+      engineProfile: 'Pod profile（可选）',
+      engineTtl: '空闲回收分钟（可选）',
+      engineKeep: '会话结束后保留 pod',
+      engineRemoteCdp: '允许连接回环之外的 CDP',
+      engineSave: '保存引擎设置',
+      engineSaving: '保存中…',
+      engineSaved: '已保存，下一步生效',
+      engineTest: '测试连接',
+      engineTesting: '连接中…',
+      engineTestOk: '连接成功：{pods}/{max} 个会话',
+      engineTestFail: '连接失败：{message}',
+      engineEnvOverride: '以下项被环境变量覆盖：{items}',
+      engineCurrent: '当前生效',
     }
 
     const en = {
@@ -119,6 +141,28 @@ window.__ModuleLoader__.load({
       browserAdvancedDisable: 'Turn advanced tool surface off',
       browserAdvancedSwitch: 'Advanced tool surface switch',
       browserCardTitle: 'Browser',
+      engineTitle: 'Engine',
+      engineHint: 'Saved settings apply on the next step; environment variables win over this file.',
+      engineMode: 'Engine',
+      engineLocal: 'Local browser',
+      enginePod: 'browser-pods sandbox',
+      engineAuto: 'Auto (fall back to local)',
+      enginePodUrl: 'Control-plane URL',
+      engineToken: 'Bearer token',
+      engineTokenSet: 'Saved — leave empty to keep it',
+      engineProfile: 'Pod profile (optional)',
+      engineTtl: 'Idle TTL minutes (optional)',
+      engineKeep: 'Keep the pod after the session closes',
+      engineRemoteCdp: 'Allow CDP endpoints outside loopback',
+      engineSave: 'Save engine settings',
+      engineSaving: 'Saving…',
+      engineSaved: 'Saved — applies on the next step',
+      engineTest: 'Test connection',
+      engineTesting: 'Testing…',
+      engineTestOk: 'Connected: {pods}/{max} sessions',
+      engineTestFail: 'Connection failed: {message}',
+      engineEnvOverride: 'Overridden by environment: {items}',
+      engineCurrent: 'Effective now',
     }
 
 
@@ -349,6 +393,12 @@ window.__ModuleLoader__.load({
 @media (max-width:640px){.msm-grid-2{grid-template-columns:1fr}.msm-page{padding:0 16px 32px}}
 .msm-cap-bar{box-sizing:border-box;display:flex;align-items:center;justify-content:space-between;gap:16px;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;background:var(--dsw-alias-bg-layer-1);padding:10px 14px}
 .msm-cap-stack{display:flex;flex-direction:column;gap:6px;width:100%}
+.msm-engine{display:flex;flex-direction:column;gap:8px;padding:12px 14px;border:1px solid var(--dsw-alias-border-l1);border-radius:12px;background:var(--dsw-alias-bg-layer-1);width:100%}
+.msm-engine-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px 12px}
+.msm-engine-field{display:flex;flex-direction:column;gap:4px;min-width:0}
+.msm-engine-input{box-sizing:border-box;width:100%;padding:6px 8px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font:inherit;font-size:12px}
+.msm-engine-check{display:flex;align-items:center;gap:8px}
+.msm-engine-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .msm-cap-bar[data-on="true"]{border-color:var(--dsw-alias-brand-primary)}
 .msm-cap-bar[data-stale="true"]{opacity:.7}
 .msm-cap-bar-text{display:flex;flex-direction:column;gap:2px;min-width:0}
@@ -444,6 +494,219 @@ window.__ModuleLoader__.load({
       if (!payload || payload.ok !== true) throw new Error(hostReason || 'The browser-use capability route rejected the request.')
       const value = payload.value && typeof payload.value === 'object' ? payload.value : payload
       return { enabled: value.enabled === true, advanced: value.advanced === true }
+    }
+
+    /** Read/write the persisted pod-engine settings (token never comes back). */
+    async function engineRequest(body) {
+      const options = {
+        method: body === undefined ? 'GET' : 'POST',
+        credentials: 'same-origin',
+        cache: 'no-store',
+        headers: {},
+      }
+      if (body !== undefined) {
+        options.headers['content-type'] = 'application/json'
+        options.body = JSON.stringify(body)
+      }
+      const response = await fetch('api/browser-use/engine', options)
+      let payload = null
+      try {
+        payload = await response.json()
+      } catch {
+        payload = null
+      }
+      const hostReason = payload && payload.error && typeof payload.error.message === 'string' ? payload.error.message : ''
+      if (!response.ok) throw new Error(hostReason || `HTTP ${response.status} ${response.statusText}`)
+      if (!payload || payload.ok !== true) throw new Error(hostReason || 'The engine route rejected the request.')
+      return payload.value && typeof payload.value === 'object' ? payload.value : payload
+    }
+
+    /** Engine settings for form C1, persisted in ~/.dsh/browser-use/engine.json. */
+    function BrowserEngineBar({ t }) {
+      const [state, setState] = React.useState({ status: 'loading', value: null, error: '' })
+      const [form, setForm] = React.useState({
+        engine: 'local',
+        podUrl: '',
+        token: '',
+        tokenTouched: false,
+        profile: '',
+        ttlMinutes: '',
+        keep: false,
+        allowRemoteCdp: false,
+      })
+      const [saving, setSaving] = React.useState(false)
+      const [testing, setTesting] = React.useState(false)
+      const [testResult, setTestResult] = React.useState(null)
+      const [notice, setNotice] = React.useState('')
+      const alive = React.useRef(true)
+      const applyValue = React.useCallback((value) => {
+        setState({ status: 'ready', value, error: '' })
+        setForm({
+          engine: value.engine === 'pod' || value.engine === 'auto' ? value.engine : 'local',
+          podUrl: value.podUrl || '',
+          token: '',
+          tokenTouched: false,
+          profile: value.profile || '',
+          ttlMinutes: value.ttlMinutes === null || value.ttlMinutes === undefined ? '' : String(value.ttlMinutes),
+          keep: value.keep === true,
+          allowRemoteCdp: value.allowRemoteCdp === true,
+        })
+      }, [])
+      React.useEffect(() => {
+        alive.current = true
+        const load = async () => {
+          try {
+            const value = await engineRequest()
+            if (alive.current) applyValue(value)
+          } catch (error) {
+            if (alive.current) setState({ status: 'error', value: null, error: messageOf(error) })
+          }
+        }
+        void load()
+        return () => {
+          alive.current = false
+        }
+      }, [applyValue])
+
+      const field = (key) => (event) => setForm((current) => ({ ...current, [key]: event.target.value }))
+      const save = async () => {
+        setSaving(true)
+        setNotice('')
+        try {
+          const patch = {
+            engine: form.engine,
+            podUrl: form.podUrl,
+            profile: form.profile,
+            ttlMinutes: form.ttlMinutes === '' ? null : Number(form.ttlMinutes),
+            keep: form.keep,
+            allowRemoteCdp: form.allowRemoteCdp,
+            ...(form.tokenTouched ? { token: form.token } : {}),
+          }
+          const value = await engineRequest(patch)
+          if (alive.current) {
+            applyValue(value)
+            setNotice(t('engineSaved'))
+          }
+        } catch (error) {
+          if (alive.current) setNotice(`${t('capSaveFailed')} — ${messageOf(error)}`)
+        } finally {
+          if (alive.current) setSaving(false)
+        }
+      }
+      const test = async () => {
+        setTesting(true)
+        setTestResult(null)
+        try {
+          const result = await engineRequest({
+            action: 'test',
+            podUrl: form.podUrl,
+            ...(form.tokenTouched && form.token !== '' ? { token: form.token } : {}),
+          })
+          if (alive.current) setTestResult(result)
+        } catch (error) {
+          if (alive.current) setTestResult({ reachable: false, error: messageOf(error) })
+        } finally {
+          if (alive.current) setTesting(false)
+        }
+      }
+
+      const value = state.value
+      const overrides = value && Array.isArray(value.envOverrides) ? value.envOverrides : []
+      return h(
+        'section',
+        { className: 'msm-engine' },
+        h(
+          'div',
+          { className: 'msm-section-head' },
+          h('h3', { className: 'msm-section-title' }, t('engineTitle')),
+          h('span', { className: 'msm-tool-sub' }, t('engineHint')),
+        ),
+        state.status === 'error'
+          ? h('p', { className: 'msm-tool-sub' }, `${t('browserStatusOffline')} — ${state.error}`)
+          : null,
+        h(
+          'div',
+          { className: 'msm-engine-grid' },
+          h(
+            'label',
+            { className: 'msm-engine-field' },
+            h('span', { className: 'msm-tool-sub' }, t('engineMode')),
+            h(
+              'select',
+              { className: 'msm-engine-input', value: form.engine, onChange: field('engine') },
+              h('option', { value: 'local' }, t('engineLocal')),
+              h('option', { value: 'pod' }, t('enginePod')),
+              h('option', { value: 'auto' }, t('engineAuto')),
+            ),
+          ),
+          h(
+            'label',
+            { className: 'msm-engine-field' },
+            h('span', { className: 'msm-tool-sub' }, t('enginePodUrl')),
+            h('input', { className: 'msm-engine-input', value: form.podUrl, onChange: field('podUrl'), placeholder: 'http://127.0.0.1:8787' }),
+          ),
+          h(
+            'label',
+            { className: 'msm-engine-field' },
+            h('span', { className: 'msm-tool-sub' }, t('engineToken')),
+            h('input', {
+              className: 'msm-engine-input',
+              type: 'password',
+              value: form.token,
+              onChange: (event) => setForm((current) => ({ ...current, token: event.target.value, tokenTouched: true })),
+              placeholder: value && value.tokenSet ? t('engineTokenSet') : '',
+              autoComplete: 'off',
+            }),
+          ),
+          h(
+            'label',
+            { className: 'msm-engine-field' },
+            h('span', { className: 'msm-tool-sub' }, t('engineProfile')),
+            h('input', { className: 'msm-engine-input', value: form.profile, onChange: field('profile') }),
+          ),
+          h(
+            'label',
+            { className: 'msm-engine-field' },
+            h('span', { className: 'msm-tool-sub' }, t('engineTtl')),
+            h('input', { className: 'msm-engine-input', value: form.ttlMinutes, onChange: field('ttlMinutes'), inputMode: 'numeric' }),
+          ),
+          h(
+            'label',
+            { className: 'msm-engine-check' },
+            h('input', { type: 'checkbox', checked: form.keep, onChange: (event) => setForm((current) => ({ ...current, keep: event.target.checked })) }),
+            h('span', { className: 'msm-tool-sub' }, t('engineKeep')),
+          ),
+          h(
+            'label',
+            { className: 'msm-engine-check' },
+            h('input', {
+              type: 'checkbox',
+              checked: form.allowRemoteCdp,
+              onChange: (event) => setForm((current) => ({ ...current, allowRemoteCdp: event.target.checked })),
+            }),
+            h('span', { className: 'msm-tool-sub' }, t('engineRemoteCdp')),
+          ),
+        ),
+        overrides.length > 0
+          ? h('p', { className: 'msm-tool-sub' }, t('engineEnvOverride', { items: overrides.join(', ') }))
+          : null,
+        h(
+          'div',
+          { className: 'msm-engine-actions' },
+          h(Btn, { onClick: () => void save(), disabled: saving }, saving ? t('engineSaving') : t('engineSave')),
+          h(Btn, { onClick: () => void test(), disabled: testing }, testing ? t('engineTesting') : t('engineTest')),
+          testResult
+            ? h(
+                'span',
+                { className: 'msm-tool-sub' },
+                testResult.reachable
+                  ? t('engineTestOk', { pods: testResult.pods ?? '?', max: testResult.max ?? '?' })
+                  : t('engineTestFail', { message: testResult.error || `HTTP ${testResult.status ?? '?'}` }),
+              )
+            : null,
+          notice ? h('span', { className: 'msm-tool-sub' }, notice) : null,
+        ),
+      )
     }
 
     function messageOf(error) {
@@ -1377,6 +1640,7 @@ window.__ModuleLoader__.load({
             ),
           ),
           h(BrowserCapabilityBar, { t, sessionId }),
+          h(BrowserEngineBar, { t }),
           h(
             'section',
             { className: 'msm-stack' },

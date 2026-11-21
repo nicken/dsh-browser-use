@@ -425,6 +425,10 @@ an intercepting proxy.
 - `GET /healthz` → counts (pods/max/instance) and uptime. Public (container healthcheck).
 - `MCP_TOKEN` check → applies to `/mcp` and everything below; only `/healthz` is handled before
   the check.
+- `/api/browser-use/engine` → `GET` returns the effective engine settings (token masked as
+  `tokenSet`), `POST` persists a partial update to `~/.dsh/browser-use/engine.json` (`0600`), and
+  `POST {action:"test"}` probes the pod control plane. Environment variables override the file, and
+  every tool call re-reads the merged config, so a save applies on the next step.
 - `GET /` → dashboard; `GET /demo` → a small built-in demo page; `GET /favicon.ico` → 204.
 - REST: `GET/POST /api/pods`, `DELETE /api/pods/:id`, `POST /api/gc`, `GET /api/sessions`,
   `GET /api/artifacts`, `GET/POST /api/artifacts/:id[/:file]` (and `POST /api/artifacts/:id/delete`),

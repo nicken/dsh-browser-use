@@ -126,6 +126,11 @@ These are known and cannot be fixed by documentation alone:
   pods. `DSH_BROWSER_POD_TOKEN` is sent as a Bearer header only; it is never written to tool results,
   the audit trail or the client UI, and error messages contain only the control-plane URL and the
   server's error text. `DSH_BROWSER_POD_KEEP=1` deliberately leaves a pod running after close.
+- **Engine settings file.** The Browser tab writes `~/.dsh/browser-use/engine.json` with mode `0600`; it
+  contains the pod bearer token in plaintext on disk. The settings route never returns the token
+  (only `tokenSet`), the token is never written to tool results or the audit log, and environment
+  variables take precedence. The `test` action performs a server-side `GET <podUrl>/api/pods`; it is
+  only reachable from the user-facing settings route, never exposed as a model tool.
 - **Potency**: a pod created this way inherits the pod's isolation boundary, but the plugin's URL
   policy, password/upload/download refusals and approval flow still apply. Treat the capability as
   granting a browser *and* the pod control plane to the session.
