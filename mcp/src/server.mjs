@@ -157,11 +157,13 @@ const server = http.createServer(async (req, res) => {
   const p = url.pathname;
 
   try {
-    if (p === '/mcp') return await handleMcp(req, res);
-
     if (p === '/healthz') return json(res, 200, { ok: true, ...P.counts(), uptime_s: Math.round(process.uptime()) });
 
+    // 鉴权放在所有业务路由之前：MCP_TOKEN 设置后 /mcp 与 /api 都必须带 Bearer。
+    // /healthz 保持公开，供容器探活使用。
     if (!authorized(req)) return json(res, 401, { error: 'unauthorized' });
+
+    if (p === '/mcp') return await handleMcp(req, res);
 
     if (p === '/' || p === '/index.html') {
       const html = fs.readFileSync(DASHBOARD, 'utf8');

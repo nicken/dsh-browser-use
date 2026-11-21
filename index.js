@@ -662,6 +662,9 @@ class BrowserInstance {
       '--disable-session-crashed-bubble',
       '--window-size=1360,900',
       '--new-window',
+      // 受控环境（容器 / CI / 内核禁用非特权 user namespace）里 Chromium 的
+      // 沙箱无法初始化，显式关闭。仅当操作者设置 DSH_BROWSER_NO_SANDBOX=1 时生效。
+      ...(process.env.DSH_BROWSER_NO_SANDBOX === '1' ? ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'] : []),
       'about:blank',
     ]
     this.child = spawn(executable, args, { stdio: 'ignore', windowsHide: false, env: process.env })

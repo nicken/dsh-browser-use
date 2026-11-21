@@ -1,13 +1,47 @@
 {
   "name": "browser-pods",
   "version": "0.1.0",
-  "private": true,
+  "private": false,
   "type": "module",
-  "description": "多租户浏览器沙箱：每个会话独立 Xvfb + Chromium + noVNC，对 agent 暴露 MCP 工具",
+  "description": "Self-hosted multi-tenant browser sandbox exposed as an MCP server: one isolated Xvfb + Chromium + noVNC desktop per session, with video/trace archiving.",
+  "license": "MIT",
+  "author": "linzhicong",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nicken/dsh-browser-use.git",
+    "directory": "mcp"
+  },
+  "homepage": "https://github.com/nicken/dsh-browser-use/tree/main/mcp#readme",
+  "bugs": {
+    "url": "https://github.com/nicken/dsh-browser-use/issues"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "browser-automation",
+    "playwright",
+    "sandbox",
+    "novnc",
+    "chromium",
+    "agent"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "files": [
+    "src/",
+    "scripts/",
+    "docs/",
+    "Dockerfile",
+    "docker-compose.yml",
+    "README.md",
+    "README.en.md"
+  ],
   "scripts": {
     "start": "node src/server.mjs",
     "smoke": "node scripts/smoke.mjs",
-    "test": "node --test tests/config.test.mjs tests/cert-ignore.test.mjs",
+    "test": "node --test tests/config.test.mjs tests/auth.test.mjs tests/cert-ignore.test.mjs",
+    "test:unit": "node --test tests/config.test.mjs tests/auth.test.mjs",
     "test:cert": "node --test tests/cert-ignore.test.mjs"
   },
   "dependencies": {

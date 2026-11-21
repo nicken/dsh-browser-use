@@ -1,21 +1,26 @@
 # 多租户浏览器沙箱
 #
-# 基础镜像用本机已有的 node:22-bookworm-slim（Debian 12）。
-# 不用 docker pull：本机 daemon 的 DNS 解析异常，拉不了 registry 上的镜像。
+# 自包含构建：Debian 12 + Xvfb/noVNC + 固定版本 Chromium（由 Playwright 下载）。
+# 默认使用官方源；网络受限时可换镜像源：
+#   docker build --build-arg APT_MIRROR=mirrors.aliyun.com \
+#                --build-arg NPM_REGISTRY=https://registry.npmmirror.com .
 
 FROM node:22-bookworm-slim
 
 USER root
 ENV DEBIAN_FRONTEND=noninteractive
 
-# 换成国内 apt 源（deb.debian.org 在这台机器上下 56MB 的中文字体会卡死）
-RUN if [ -f /etc/apt/sources.list.d/debian.sources ]; then \
-      sed -i 's|http://deb.debian.org|http://mirrors.aliyun.com|g; s|http://security.debian.org|http://mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources; \
-    fi; \
-    if [ -f /etc/apt/sources.list ]; then \
-      sed -i 's|http://deb.debian.org|http://mirrors.aliyun.com|g; s|http://security.debian.org|http://mirrors.aliyun.com|g' /etc/apt/sources.list; \
-    fi; \
-    cat /etc/apt/sources.list.d/debian.sources 2>/dev/null | head -5
+ARG APT_MIRROR=
+ARG NPM_REGISTRY=https://registry.npmjs.org
+
+RUN if [ -n "$APT_MIRROR" ]; then \
+      if [ -f /etc/apt/sources.list.d/debian.sources ]; then \
+        sed -i "s|http://deb.debian.org|http://$APT_MIRROR|g; s|http://security.debian.org|http://$APT_MIRROR|g" /etc/apt/sources.list.d/debian.sources; \
+      fi; \
+      if [ -f /etc/apt/sources.list ]; then \
+        sed -i "s|http://deb.debian.org|http://$APT_MIRROR|g; s|http://security.debian.org|http://$APT_MIRROR|g" /etc/apt/sources.list; \
+      fi; \
+    fi
 
 # Xvfb / VNC / noVNC / 窗口管理器 / 中文字体 / Chromium 运行库
 RUN apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 update \
@@ -33,7 +38,7 @@ ENV NODE_ENV=production \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 COPY package.json ./
-RUN npm install --omit=dev --no-audit --no-fund --registry=https://registry.npmmirror.com \
+RUN npm install --omit=dev --no-audit --no-fund --registry="$NPM_REGISTRY" \
     && npm cache clean --force
 
 # 与 package.json 里的 playwright 版本严格匹配的 Chromium
@@ -42,7 +47,7 @@ RUN npx playwright install chromium \
     && rm -rf /var/lib/apt/lists/*
 
 COPY src ./src
-# 以非 root 用户（宿主 uid 1000）运行，需要源码可读
+# 源码可读；compose 再以宿主 uid 运行（直接 docker run 时默认 root）
 RUN chmod -R a+rX /app
 
 ENV DATA_DIR=/data \

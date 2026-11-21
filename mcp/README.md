@@ -1,5 +1,8 @@
 # browser-pods
 
+> 本目录是 [`dsh-browser-use`](../README.md) 仓库的一部分（通过 git subtree 合入，保留完整历史），
+> 也可以单独取用：把 `mcp/` 当作独立项目部署即可。英文摘要见 [`README.en.md`](README.en.md)。
+
 给 agent 用的**浏览器沙箱**。一个 MCP 端点负责全部事情：开浏览器、操作页面、关掉并归档录像。
 每个会话独占一个虚拟显示器 + 一个 Chromium，跑在容器里——窗口不会弹到你的屏幕上，也不会抢鼠标。
 
@@ -11,7 +14,7 @@
 
 ---
 
-> 接手 / 恢复：先看 [`docs/STATUS.md`](docs/STATUS.md)（现状快照、文件地图、恢复步骤、已定型决策、待办）。
+> 第一次上手：先看下面的架构与快速开始；配置项见第八节，排障见第十节。
 
 ## 一、架构
 
@@ -19,13 +22,13 @@
  agent A ─┐
  agent B ─┼── MCP over HTTP ──► ┌──────────────────────────────────────────────┐
  agent C ─┘   :8787/mcp         │ browser-pods 容器（host 网络，cgroup 限资源）│
-                                │  pod-1  Xvfb :101 + Chromium + VNC :6081     │
-                                │  pod-2  Xvfb :102 + Chromium + VNC :6082     │
-                                │  pod-3  Xvfb :103 + Chromium + VNC :6083     │
+                                │  pod-1  Xvfb :102 + Chromium + VNC :6082     │
+                                │  pod-2  Xvfb :103 + Chromium + VNC :6083     │
+                                │  pod-3  Xvfb :104 + Chromium + VNC :6084     │
                                 │  控制面 :8787（看板 / REST / MCP）           │
                                 └──────────────────────────────────────────────┘
  你 ── 浏览器 ──► http://127.0.0.1:8787/        看板（缩略图 + 操作日志 + 回放）
-             └─► http://127.0.0.1:6081/vnc.html 某个会话的实时画面（可接管）
+             └─► http://127.0.0.1:6082/vnc.html 某个会话的实时画面（可接管）
 ```
 
 三层隔离：
@@ -41,15 +44,15 @@
 ## 二、快速开始
 
 ```bash
-cd browser-pods
+cd mcp                           # 在本仓库根目录执行；独立使用时进入项目目录
 docker compose up -d --build     # 首次构建 5~10 分钟
 curl -s http://127.0.0.1:8787/healthz
 open http://127.0.0.1:8787/      # 看板
 ```
 
-> 本机 docker daemon 的 DNS 解析有问题（`docker pull` 报 `no such host`），所以镜像完全用本机已有镜像构建：
-> 基础层 `node:22-bookworm-slim`，apt 走阿里云源，npm 走 npmmirror，Chromium 由 Playwright 自己下载。
-> **不需要从 registry 拉任何新镜像。**
+> 镜像自包含：基础层 `node:22-bookworm-slim`，apt 安装 Xvfb/noVNC 等运行库，
+> Chromium 由 Playwright 按 `package.json` 里的版本下载，不需要宿主机预装浏览器。
+> 网络受限时可加构建参数：`docker compose build --build-arg APT_MIRROR=<host> --build-arg NPM_REGISTRY=<url>`。
 
 冒烟（会真的并发开 3 个浏览器，跑完自动关）：
 
@@ -73,7 +76,7 @@ node scripts/interact-test.mjs   # 点击 / 输入 / eval / 快照
 
 ### 2）noVNC 实时画面（要看真实交互时）
 
-每个会话的 `live_view_url`，形如 `http://127.0.0.1:6081/vnc.html?autoconnect=1&resize=remote`。
+每个会话的 `live_view_url`，形如 `http://127.0.0.1:6082/vnc.html?autoconnect=1&resize=remote`。
 这是该会话**独占的虚拟桌面**（默认 1440×900），不是你的真实桌面；能看到滚动、点击、输入，也能直接接管。
 
 ![实时画面](docs/live-view.png)
@@ -99,7 +102,7 @@ node scripts/interact-test.mjs   # 点击 / 输入 / eval / 快照
 
 ## 四、接入 MCP
 
-### DSH（已在 `web` profile 接好）
+### DSH
 
 配置就是 profile 里的一条普通 MCP 条目，和 context7 一模一样，**可以在 toolbox 的 MCP 面板里编辑/停用**：
 
@@ -117,9 +120,6 @@ node scripts/interact-test.mjs   # 点击 / 输入 / eval / 快照
 ```
 
 保存后会自动重载并重新同步工具列表；工具以 `mcp__browser__*` 出现，共 16 个。
-
-> 曾经用 configuration-only bundle 装过：工具能出现，但 bundle 里的条目在 toolbox 里是**只读**的
-> （`Mutation checks in callers still require the profile entry id`），所以改成了现在这种可编辑写法。
 
 ### 其他客户端
 
@@ -158,7 +158,7 @@ browser_close({ session_id })                                 # 归档录像 + t
 
 | 语义 | 行为 |
 |---|---|
-| 打开 | `browser_open` 起 Xvfb + Chromium + VNC + 录像，就绪后返回（实测 ~1.5s） |
+| 打开 | `browser_open` 起 Xvfb + Chromium + VNC + 录像，就绪后返回（通常 1~2 秒，视机器而定） |
 | 关闭 | `browser_close` 停进程并归档 `video.webm` / `trace.zip` / `meta.json` |
 | 空闲回收 | 默认 60 分钟（`POD_IDLE_TTL_MIN`），按最后一次操作算，**正在操作的不回收**；0 = 关闭 |
 | 过期时间 | `browser_list` 里每个会话带 `expires_at` |
@@ -176,7 +176,7 @@ browser_close({ session_id })                                 # 归档录像 + t
 | 跨会话 | 完全并行：各自显示器、Chromium 进程、profile、端口 |
 | 会话内 | 工具调用串行（互斥队列），多个 agent 抢同一 session 不会踩页面 |
 | profile 复用 | `browser_open({ profile: "shop" })` 复用登录态；同一 profile 同时只允许一个会话 |
-| 端口 | 第 n 个槽位：display `:10n`、VNC `590n`、noVNC `608n`、CDP `922{2+n}` |
+| 端口 | 第 n 个槽位：display `101+n`、VNC `5901+n`、noVNC `6081+n`、CDP `9222+n`（n 从 1 开始） |
 
 一台机器不够就多开实例（各实例端口段自动错开）：
 
@@ -188,10 +188,10 @@ browser_close({ session_id })                                 # 归档录像 + t
 
 | 实例 i | 控制面 | 显示器 | noVNC | CDP | 数据 |
 |---|---|---|---|---|---|
-| 1 | 8787 | `:121…` | 6101… | 9243… | `data/instance-1` |
-| 2 | 8788 | `:141…` | 6121… | 9263… | `data/instance-2` |
+| 1 | 8787 | `:121…` | 6101… | 9242… | `data/instance-1` |
+| 2 | 8788 | `:141…` | 6121… | 9262… | `data/instance-2` |
 
-> 多实例与 `docker compose` 单实例抢 8787，脚本会检测并提示先 `docker compose down`。
+> 多实例与 `docker compose` 单实例抢 8787，脚本会检测并提示先在 `mcp/` 下执行 `docker compose down`。
 
 ---
 
@@ -223,13 +223,13 @@ trace 含页面 DOM 快照，可能有敏感信息。
 | `PUBLIC_HOST` | `127.0.0.1` | 生成 noVNC 链接用的主机名 |
 | `PODS_MAX` | `6` | 最大并发会话 |
 | `POD_IDLE_TTL_MIN` | `60` | 空闲回收分钟数，0 = 不回收 |
-| `MCP_DRIVER_TOOLS` | `1` | 1 = 含驱动工具（16 个）；0 = 只供应（5 个） |
+| `MCP_DRIVER_TOOLS` | `1`（compose；代码默认 `0`） | 1 = 含驱动工具（16 个）；0 = 只供应（5 个） |
 | `IGNORE_CERT_ERRORS` | `0` | 1 = 新建会话默认跳过 TLS 证书校验（自签/内网站点）；单次会话可用 `browser_open({ ignore_cert_errors })` 覆盖 |
 | `VIEWPORT_W` / `VIEWPORT_H` | `1440` / `900` | 虚拟屏幕尺寸 |
 | `DISPLAY_BASE` / `VNC_PORT_BASE` / `VIEW_PORT_BASE` / `CDP_PORT_BASE` | `101` / `5901` / `6081` / `9223` | 槽位端口基数 |
 | `RECORD_VIDEO` / `RECORD_TRACE` | `1` / `1` | 是否录制 |
 | `ARTIFACTS_KEEP` | `20` | 归档保留份数（compose 设置；代码默认 50） |
-| `MCP_TOKEN` | 空 | 设置后 MCP 与 `/api` 需要 Bearer |
+| `MCP_TOKEN` | 空 | 设置后 `/mcp`、看板与 `/api` 都需要 `Authorization: Bearer <token>`；`/healthz` 保持公开。明文 token，暴露到本机之外时仍需 TLS 反向代理 |
 | `VNC_ENABLED` / `VNC_LISTEN_HOST` | `1` / `127.0.0.1` | 实时画面开关与监听地址 |
 | `INSTANCE_NAME` | `instance-1` | 实例名（看板与 healthz 显示） |
 
@@ -240,7 +240,7 @@ trace 含页面 DOM 快照，可能有敏感信息。
 - 容器限额：`cpus: 6`、`mem_limit: 12g`、`pids_limit: 1024`、`shm_size: 1gb`；
 - 空载 ~120MB；单个会话 ~300~600MB，6 个会话约 2~3GB；
 - 默认只监听 `127.0.0.1`：控制面、noVNC、x11vnc 全部只在本机可达；
-- 要给局域网看：`LISTEN_HOST=0.0.0.0`、`VNC_LISTEN_HOST=0.0.0.0`、`PUBLIC_HOST=<机器 IP>`，并**务必**设 `MCP_TOKEN`；
+- 要给局域网看：`LISTEN_HOST=0.0.0.0`、`VNC_LISTEN_HOST=0.0.0.0`、`PUBLIC_HOST=<机器 IP>`，并**务必**设 `MCP_TOKEN`（覆盖 `/mcp`、看板与 `/api`）。noVNC 仍然没有密码，且 token 是明文，建议在外层加 TLS 认证代理或只走 SSH 隧道；
 - 容器以宿主 uid 运行，`data/` 下的 profile 不会变成 root 所有。
 - **TLS 证书默认校验**：自签/内网站点会被拦下。确认信任时用 `browser_open({ ignore_cert_errors: true })` 或服务端 `IGNORE_CERT_ERRORS=1` 显式跳过；跳过只影响该会话的浏览器进程，期间不防中间人，**不要对公网未知站点开启**。证书错误会返回可操作提示，不会静默失败。
 
@@ -253,8 +253,8 @@ trace 含页面 DOM 快照，可能有敏感信息。
 | `Xvfb` 段错误（`libEGL_nvidia` / `swrast_dri`） | 宿主有 NVIDIA 库时 GLX 会崩，已默认 `-extension GLX`，Chrome 走 SwiftShader |
 | `Xvfb` 报 `/tmp/.X11-unix will not be created` | 代码会先 `mkdir -p /tmp/.X11-unix` |
 | Playwright 报 `chromium-1234` 不存在 | 版本错配。容器里由 `npx playwright install chromium` 固定；宿主机调试用 `BROWSER_CHANNEL=chrome` |
-| `docker build` 报 DNS `no such host` | 本机 daemon 解析问题；构建时加 `--network=host`，或不依赖 registry |
-| 工具都列出来但调用失败 | 容器没跑：`cd browser-pods && docker compose up -d` |
+| `docker build` 时报 DNS / 拉取失败 | 网络或镜像源问题；可加 `--network=host`，或传 `--build-arg APT_MIRROR=<host> --build-arg NPM_REGISTRY=<url>` |
+| 工具都列出来但调用失败 | 容器没跑：在 `mcp/` 下执行 `docker compose up -d` |
 | 自签/内网 HTTPS 报 `ERR_CERT_AUTHORITY_INVALID` | 默认校验证书。确认信任后 `browser_open({ ignore_cert_errors: true })` 重开一个会话（已开的会话不会变更） |
 | toolbox 里改了配置不生效 | 保存会触发重载；仍不行就重启 `dsh web` |
 | noVNC 打开黑屏 | 会话已关或 Chromium 挂了；看板状态会显示 `closed` / `error` |
@@ -265,8 +265,8 @@ trace 含页面 DOM 快照，可能有敏感信息。
 ## 十一、目录结构与 Git
 
 ```
-browser-pods/
-├── Dockerfile              # 基于本机已有镜像构建，不依赖 registry
+mcp/                        # 本仓库中的目录；单独取用时就是项目根目录
+├── Dockerfile              # 自包含构建（node:22-bookworm-slim + Xvfb/noVNC + Chromium）
 ├── docker-compose.yml      # host 网络 + 资源限额
 ├── package.json
 ├── src/
@@ -283,12 +283,17 @@ browser-pods/
 └── data/                   # 运行时：profile、录像、归档（不入库）
 ```
 
-仓库已用 git 管理，`data/`、`node_modules/`、日志都不入库：
+`mcp/` 通过 **git subtree** 合入 `dsh-browser-use` 仓库（保留完整历史），`data/`、`node_modules/`、
+日志都不入库。在仓库根目录查看：
 
 ```bash
-git -C browser-pods status
-git -C browser-pods log --oneline
+git status --short -- mcp
+git log --oneline -- mcp
 ```
+
+维护者同步上游用 `git subtree pull --prefix=mcp <browser-pods 仓库> main`，把本目录改动推回
+上游用 `git subtree push --prefix=mcp <browser-pods 仓库> main`（详见仓库根目录的
+[`docs/DEVELOPMENT.md`](../docs/DEVELOPMENT.md)）。
 
 ---
 
