@@ -103,22 +103,28 @@ async function startExternalChromium(executable) {
   throw new Error('external Chromium did not report a DevTools port');
 }
 
-async function loadChromium(t) {
+/**
+ * Resolve the browser executable: DSH_BROWSER_PATH wins, then Playwright's
+ * bundled Chromium. Skips (instead of failing) when neither is available.
+ */
+async function resolveExecutable(t) {
+  let chromium = null;
   try {
-    const { chromium } = await import('playwright');
-    return chromium;
+    ({ chromium } = await import('playwright'));
   } catch {
-    t.skip('playwright is not installed (npm install --no-save playwright@1.62.1)');
-    return null;
+    chromium = null;
   }
+  const candidate = process.env.DSH_BROWSER_PATH || (chromium ? chromium.executablePath() : '');
+  if (!candidate || !existsSync(candidate)) {
+    return t.skip('no browser executable; set DSH_BROWSER_PATH or run npx playwright install chromium');
+  }
+  return candidate;
 }
 
 test('facade：open → observe → act → read → evidence → session → close', async (t) => {
   if (process.platform === 'linux' && !process.env.DISPLAY) return t.skip('no DISPLAY; run under xvfb-run');
-  const chromium = await loadChromium(t);
-  if (!chromium) return;
-  const executable = chromiumExecutable(chromium);
-  if (!executable || !existsSync(executable)) return t.skip('no Chromium executable');
+  const executable = await resolveExecutable(t);
+  if (!executable) return;
   process.env.DSH_BROWSER_PATH = executable;
   delete process.env.DSH_BROWSER_ENGINE;
   delete process.env.DSH_BROWSER_POD_URL;
@@ -192,10 +198,8 @@ test('facade：open → observe → act → read → evidence → session → cl
 });
 
 test('attach：browser_open({cdp_url}) 接管外部 Chromium，关闭只 detach', async (t) => {
-  const chromium = await loadChromium(t);
-  if (!chromium) return;
-  const executable = chromiumExecutable(chromium);
-  if (!executable || !existsSync(executable)) return t.skip('no Chromium executable');
+  const executable = await resolveExecutable(t);
+  if (!executable) return;
   delete process.env.DSH_BROWSER_ENGINE;
   delete process.env.DSH_BROWSER_POD_URL;
 
