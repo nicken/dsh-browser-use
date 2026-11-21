@@ -1531,7 +1531,7 @@ async function browserOpen(ctx, exec, args) {
       return {
         ok: true,
         tool: 'browser_open',
-        mode: existing.mode,
+        mode: existing.pod ? 'pod' : existing.mode,
         ...(existing.cdpUrl ? { cdp_url: existing.cdpUrl } : {}),
         ...(existing.pod ? { pod: { id: existing.pod.id, live_view_url: existing.pod.liveViewUrl } } : {}),
         url: String(meta?.url ?? admitted.url),
@@ -2795,7 +2795,7 @@ export function apply(ctx) {
     return () => {
       clearInterval(timer)
       for (const instance of [...instances.values()]) {
-        void instance.close().catch(() => {})
+        void closeInstanceAndPod(instance, 'plugin unloaded').catch(() => {})
       }
       instances.clear()
     }

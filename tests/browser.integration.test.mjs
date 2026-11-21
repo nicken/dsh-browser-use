@@ -374,11 +374,11 @@ test('已有本地浏览器时 attach 另一个 CDP 会被拒绝而不是静默�
   const executable = process.env.DSH_BROWSER_PATH || (chromium ? chromium.executablePath() : '');
   if (!executable || !existsSync(executable)) return t.skip('no browser executable');
   if (process.platform === 'linux' && !process.env.DISPLAY) return t.skip('no DISPLAY');
+  const saved = { ...process.env };
   process.env.DSH_BROWSER_PATH = executable;
   const pages = await startServer();
   const base = `http://127.0.0.1:${pages.address().port}`;
   const h = await createHarness();
-  const saved = { ...process.env };
   try {
     delete process.env.DSH_BROWSER_ENGINE;
     const opened = await h.call('browser', { action: 'open', url: `${base}/` });
