@@ -26,6 +26,15 @@ afterwards. The design rationale and the intended composition are in
 
 ---
 
+## Screenshots
+
+![Browser tab: capability switches and the execution-engine settings](docs/assets/browser-tab.png)
+
+The Browser tab is the only place the model-facing browser surface is configured: the per-session
+on/off switch, the advanced tool surface, and the **execution engine** (local / browser-pods / auto,
+control-plane URL, token, profile, TTL). Settings saved here land in
+`~/.dsh/browser-use/engine.json` and apply on the next step; environment variables take precedence.
+
 ## Features
 
 ### DSH plugin

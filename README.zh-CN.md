@@ -23,6 +23,14 @@
 
 ---
 
+## 截图
+
+![浏览器 tab：能力开关与执行引擎设置](docs/assets/browser-tab.png)
+
+「浏览器」tab 是模型侧浏览器能力的唯一配置入口：本会话开关、高级工具面，以及**执行引擎**
+（本机 / browser-pods / 自动、控制面地址、token、profile、TTL）。这里保存的设置写入
+`~/.dsh/browser-use/engine.json`，下一步生效；环境变量优先。
+
 ## 特点
 
 ### DSH 插件
