@@ -1,17 +1,17 @@
 # Testing
 
 There are two test suites: the plugin tests at the repository root (Node's built-in test runner, with
-one real-Chromium integration test) and the MCP server tests under `mcp/` (configuration unit tests
+real-Chromium integration tests) and the MCP server tests under `mcp/` (configuration/auth unit tests
 plus a real Xvfb + Chromium certificate test). CI runs both.
 
 ## Current status
 
 | Suite | Command | Needs | Status |
 |---|---|---|---|
-| Plugin unit (6 tests) | `npm run test:unit` | Node >= 22, no browser | Passing |
-| Plugin integration (1 end-to-end test) | `npm run test:integration` | Xvfb/display, Playwright + Chromium | Passing locally under `xvfb-run` |
-| Plugin combined | `npm test` | both of the above | Passing locally; runs in CI |
-| MCP config (3 tests) | `cd mcp && npm test` | Node only | Passing |
+| Plugin unit (17 tests) | `npm run test:unit` | Node >= 22, no browser | Passing |
+| Plugin integration (6 tests) | `npm run test:integration` | Xvfb/display + a Chromium/Chrome binary | Passing locally and in CI |
+| Plugin combined (23 tests) | `npm test` | both of the above | Passing locally; runs in CI |
+| MCP config + auth (4 tests) | `cd mcp && npm run test:unit` | Node only | Passing |
 | MCP certificate integration (1 test) | `cd mcp && npm test` (or `npm run test:cert`) | Xvfb, Playwright Chromium | Passing locally/CI |
 | Docker image build | `docker build -t browser-pods ./mcp` | Docker | Optional, non-blocking CI job |
 
@@ -27,8 +27,9 @@ DSH.
 `createHarness()` builds a minimal stand-in for the DSH Host:
 
 - creates a temporary `DSH_HOME` (`mkdtemp`), so real `~/.dsh` state is never touched;
-- writes `capability-toggles.json` with `{ sessions: { "test-session": { browserUse: true } } }` by
-  default (tests can disable it or supply a policy file);
+- writes `capability-toggles.json` with
+  `{ sessions: { "test-session": { browserUse: true, browserUseAdvanced: false } } }` by default
+  (tests can disable it, enable the advanced surface, or supply a policy file);
 - provides `ctx.tools.register`, `ctx.effect`, `ctx.inject` (with a fake `connection.fetch`),
   `ctx.get('approval')`, and records the registered tools and routes;
 - exposes `call(name, args)` which invokes the real tool `execute(args, exec)` from `index.js`;
@@ -37,19 +38,30 @@ DSH.
 The approval seam defaults to `allowed-once` with policy `standard`, which lets the integration test
 exercise the approval path deterministically.
 
-### `tests/tools.unit.test.mjs` (6 tests)
+### `tests/tools.unit.test.mjs` (17 tests)
 
 No browser is launched. The tests cover:
 
-1. `apply` registers exactly the six browser tools.
-2. `browser_open` accepts only absolute `http(s)` URLs — `javascript:`, `file:`, `data:`, relative
-   and scheme-less inputs all return `invalid_url` with guidance.
-3. `blockedDomains` and `allowedDomains` from `policy.json` are enforced (`domain_blocked`).
-4. All browser tools refuse with `no_session` when called outside a conversation.
-5. `browser_session` validates its action; `pause` blocks subsequent tools with `paused`; the model
-   has no resume action; deleting the pause record restores normal validation.
-6. A missing/invalid browser path returns `browser_launch_failed` (not a thrown exception) and the
-   guidance mentions `DSH_BROWSER_PATH`.
+1. **Tool surface / capability gating.** The default surface is exactly one `browser` tool; turning
+   on `browserUseAdvanced` exposes the six granular tools; the capability route (`GET`/`POST
+   /api/browser-use/capability`) round-trips both `enabled` and `advanced`.
+2. **Facade dispatch.** `browser({action})` rejects unknown actions and forwards `open`, `observe`,
+   `act`, `read`, `session` and `evidence` to the real handlers.
+3. **URL policy.** `open` accepts only absolute `http(s)` URLs (`javascript:`, `file:`, `data:`,
+   relative and scheme-less inputs return `invalid_url` with guidance); `blockedDomains` /
+   `allowedDomains` from `policy.json` are enforced (`domain_blocked`).
+4. **No-session refusals.** Operation actions refuse with `no_session` outside a conversation while
+   `session status` still works.
+5. **Pause semantics.** `session op=pause` blocks subsequent tools (`paused`), the model has no
+   resume action, and deleting the pause record restores normal validation.
+6. **Launch failures.** A missing/invalid browser path returns `browser_launch_failed` (not a thrown
+   exception) and the guidance mentions `DSH_BROWSER_PATH`.
+7. **Pod engine failures.** Unreachable control plane → `pod_unavailable`, `401` → `pod_auth`,
+   `5xx` → `pod_refused`, and `engine=auto` falls back to local with an `engineNote`.
+8. **Engine settings (`engine.json`).** Defaults are `local`; saving persists (mode `0600`) and never
+   returns the token (only `tokenSet`); environment variables override the file and are reported in
+   `envOverrides`; a saved pod config is used by the tools without env vars; the `test` action probes
+   the control plane.
 
 Run:
 
@@ -57,32 +69,43 @@ Run:
 npm run test:unit
 ```
 
-### `tests/browser.integration.test.mjs` (1 end-to-end test)
+### `tests/browser.integration.test.mjs` (6 tests)
 
-A local `node:http` server serves two pages. The test drives the real plugin against a real
-Chromium through the harness:
+Real-browser tests; each skips cleanly when no display or browser binary is available.
 
-`browser_open` → `browser_observe` (numbered refs) → `browser_act` (click link; diff returned) →
-`browser_read` (query returns matching paragraphs) → `browser_evidence` (screenshot exists on disk)
-→ password-field typing is refused (`password_target`) → a high-risk "Delete account" click goes
-through the approval seam → `browser_session` (`tabs`, `pause` blocks observation) → `close`.
+1. **Facade round trip.** Local HTTP pages; `browser({action:"open"})` → `observe` (numbered refs) →
+   `act` (click a link; diff returned) → `read` (query returns matching paragraphs) → `evidence`
+   (screenshot exists on disk) → password-field typing refused (`password_target`) → a high-risk
+   "Delete account" click goes through the approval seam → `session` (`tabs`, `pause` blocks
+   observation) → `close`.
+2. **Attach mode.** Starts an external headless Chromium, opens its CDP endpoint through
+   `browser({action:"open", cdp_url})`, observes/acts, then closes the session: the plugin must
+   **detach** and leave the external process alive.
+3. **Pod engine happy path.** A fake browser-pods control plane returns a local Chromium CDP URL;
+   the plugin creates one pod (`POST /api/pods`), a second `open` reuses it (no second POST), and
+   `session close` sends `DELETE /api/pods/{id}` while leaving the browser process alive.
+4. **Pod `KEEP=1`.** Closing only detaches; no DELETE is sent.
+5. **Remote CDP refusal.** A non-loopback `cdp_url` is refused with `cdp_not_allowed` unless
+   `DSH_BROWSER_ALLOW_REMOTE_CDP=1`.
+6. **Attach conflict.** With a local browser already open, opening a different `cdp_url` is refused
+   with `browser_already_open` instead of silently reusing it.
 
 Requirements and skip behaviour:
 
-- A display is required on Linux; without `DISPLAY` the test **skips** with a message. Run it under
-  `xvfb-run` on headless machines.
-- `playwright` is test-only and intentionally **not** a package dependency (so consumers never download a browser). Install it with `npm install --no-save playwright@1.62.1`; without it the test skips.
-- The browser executable is resolved from `DSH_BROWSER_PATH`, then `PLAYWRIGHT_CHROMIUM_PATH`, then
-  Playwright's `chromium.executablePath()`. Install Playwright's browser with
-  `npx playwright install chromium` (add `--with-deps` on a clean Linux host).
+- A display is required on Linux for the local-browser test; without `DISPLAY` it **skips**. Run it
+  under `xvfb-run` on headless machines.
+- `playwright` is test-only and intentionally **not** a package dependency (so consumers never
+  download a browser). Install it with `npm install --no-save playwright@1.62.1`; without it tests
+  skip.
+- The browser executable is resolved from `DSH_BROWSER_PATH`, then Playwright's
+  `chromium.executablePath()`; a system Chrome works too (`DSH_BROWSER_PATH=/usr/bin/google-chrome`).
 - In containers/CI where Chromium's sandbox cannot initialise, set `DSH_BROWSER_NO_SANDBOX=1`. This
-  adds `--no-sandbox --disable-setuid-sandbox --disable-dev-shm-usage` to the spawned browser. It is
-  a test-environment accommodation, not the desktop default.
+  adds `--no-sandbox --disable-setuid-sandbox --disable-dev-shm-usage` to the spawned browser.
 
 Run:
 
 ```bash
-npm install
+npm install --no-save playwright@1.62.1
 npx playwright install chromium
 xvfb-run -a npm run test:integration    # or: xvfb-run -a npm test
 ```
@@ -91,10 +114,10 @@ xvfb-run -a npm run test:integration    # or: xvfb-run -a npm test
 
 ## MCP tests (`mcp/`)
 
-`cd mcp && npm test` runs four tests:
+`cd mcp && npm test` runs five tests (config, auth, certificate):
 
 ```text
-node --test tests/config.test.mjs tests/cert-ignore.test.mjs
+node --test tests/config.test.mjs tests/auth.test.mjs tests/cert-ignore.test.mjs
 ```
 
 ### `config.test.mjs` (3 tests)
@@ -107,6 +130,12 @@ fresh child Node process with overridden environment and prints the resulting `c
 - `PODS_MAX=3` and `POD_IDLE_TTL_MIN=7` parse to `3` and `7 * 60_000` ms.
 
 No browser is started.
+
+### `auth.test.mjs` (1 test)
+
+Starts the real HTTP server with `MCP_TOKEN` set and asserts that `POST /mcp` and `GET /api/config`
+return `401` without a Bearer token, that `/healthz` stays public, and that `tools/list` succeeds
+with the token.
 
 ### `cert-ignore.test.mjs` (1 integration test)
 

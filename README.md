@@ -104,7 +104,7 @@ The two halves have different prerequisites, and you do not need both.
 |---|---|---|
 | **Plugin only** (local browser) | DSH (tested with `0.2.2-rc.5`, `web` profile) and Microsoft Edge or Google Chrome | Docker, Playwright, `npm install` — the plugin has no runtime npm dependencies and runs on the Node that ships with DSH |
 | **MCP only** (browser pods) | Docker Engine 24+ with Compose v2 on a Linux host; ~2 GB disk and ~1–2 GB RAM per concurrent pod | Xvfb, Chromium, noVNC, Node/Playwright — everything is inside the image; no host browser required |
-| **Both, integrated** | Both of the above | Form C (plugin routes sessions to pods) is a proposal — see [docs/DEPLOYMENT-FORMS.md](docs/DEPLOYMENT-FORMS.md) |
+| **Both, integrated** | Both of the above | Form C is implemented: pick `browser-pods 沙箱` in the Browser tab's **Execution engine** section, or set `DSH_BROWSER_ENGINE=pod`; see [docs/DEPLOYMENT-FORMS.md](docs/DEPLOYMENT-FORMS.md) |
 
 - **Node.js:** the repository declares `engines.node >= 22`; the plugin itself runs inside the DSH
   host. Tests use Playwright, installed on demand: `npm install --no-save playwright@1.62.1`.
@@ -142,8 +142,8 @@ Then enable the installed bundle in **Plugins** if DSH leaves it off (the instal
 
 1. Open a conversation.
 2. Open the **Browser** tab and turn **Browser control** on (the switch at the top of the tab).
-3. The saved value applies on the next step; the six `browser_*` tools become available to the
-   agent.
+3. The saved value applies on the next step; the single `browser` tool becomes available to the
+   agent. Turn on **Advanced tool surface** if you need the six granular `browser_*` tools instead.
 
 Plugin data lives under `~/.dsh/browser-use/` (profiles, screenshots, policy, audit, pause record);
 the capability switch lives in `~/.dsh/capability-toggles.json`. Override the DSH home with
@@ -441,8 +441,8 @@ for prerequisites and what each test covers.
 | Document | Contents |
 |---|---|
 | [docs/POSITIONING.md](docs/POSITIONING.md) | How the plugin and the MCP server relate, and which one should own which task |
-| [docs/DEPLOYMENT-FORMS.md](docs/DEPLOYMENT-FORMS.md) | Plugin only vs MCP only vs integrated (one model-visible browser object): proposal and migration path |
-| [docs/TOOL-SURFACE.md](docs/TOOL-SURFACE.md) | Proposal to collapse 6 tools into one facade tool plus an opt-in advanced switch |
+| [docs/DEPLOYMENT-FORMS.md](docs/DEPLOYMENT-FORMS.md) | Plugin only vs MCP only vs integrated (one model-visible browser object): design, implemented C1 details, remaining roadmap |
+| [docs/TOOL-SURFACE.md](docs/TOOL-SURFACE.md) | Why the default surface is one facade tool, and how the advanced switch restores the six granular tools |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Plugin internals (CDP, observation, refs, safety, routes) and MCP internals (pods, recording, HTTP) |
 | [docs/SECURITY.md](docs/SECURITY.md) | Threat models, defaults and deployment recommendations for both components |
 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Local setup, directory map, MCP subtree workflow, releases |

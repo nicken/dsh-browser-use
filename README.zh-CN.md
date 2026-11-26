@@ -91,7 +91,7 @@
 |---|---|---|
 | **只装插件**（本机浏览器） | DSH（实测 `0.2.2-rc.5`，`web` profile）+ Microsoft Edge 或 Google Chrome | Docker、Playwright、`npm install`——插件没有运行时 npm 依赖，跑在 DSH 自带的 Node 上 |
 | **只装 MCP**（浏览器 pods） | Linux 宿主机上的 Docker Engine 24+（含 Compose v2）；每并发 pod 约 1–2 GB 内存、镜像约 2 GB 磁盘 | Xvfb、Chromium、noVNC、Node/Playwright——全部在镜像里，宿主机不需要装浏览器 |
-| **两者整合** | 以上两者；插件配置 pod 端点 | 形态 C（插件把会话路由到 pod）目前是设计提案，见 [docs/DEPLOYMENT-FORMS.md](docs/DEPLOYMENT-FORMS.md) |
+| **两者整合** | 以上两者；插件配置 pod 端点 | 形态 C 已实现：在「浏览器」tab 的**执行引擎**里选 `browser-pods 沙箱`，或设置 `DSH_BROWSER_ENGINE=pod`；见 [docs/DEPLOYMENT-FORMS.md](docs/DEPLOYMENT-FORMS.md) |
 
 - **Node.js：** 仓库声明 `engines.node >= 22`；插件本身运行在 DSH 宿主内。测试用 Playwright，
   按需安装：`npm install --no-save playwright@1.62.1`。
@@ -412,8 +412,8 @@ GitHub Actions 工作流 `.github/workflows/ci.yml` 会在 Node 22 和 24 上跑
 | 文档 | 内容 |
 |---|---|
 | [docs/POSITIONING.md](docs/POSITIONING.md) | 插件与 MCP 服务器如何分工、每个任务该由哪个组件承担 |
-| [docs/DEPLOYMENT-FORMS.md](docs/DEPLOYMENT-FORMS.md) | 三种形态（只插件 / 只 MCP / 整合为一个模型可见对象）的提案与迁移路径 |
-| [docs/TOOL-SURFACE.md](docs/TOOL-SURFACE.md) | 把 6 个工具合并为 1 个默认 facade + 可选「高级」开关的提案 |
+| [docs/DEPLOYMENT-FORMS.md](docs/DEPLOYMENT-FORMS.md) | 三种形态（只插件 / 只 MCP / 整合为一个模型可见对象）的设计、C1 实现细节与后续路线 |
+| [docs/TOOL-SURFACE.md](docs/TOOL-SURFACE.md) | 为什么默认是 1 个 facade 工具，以及高级开关如何恢复 6 个细分工具 |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 插件内部（CDP、观察、ref、安全、路由）与 MCP 内部（pod、录制、HTTP） |
 | [docs/SECURITY.md](docs/SECURITY.md) | 两个组件的威胁模型、默认边界与部署建议 |
 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | 本地开发、目录地图、MCP 子树工作流、发布流程 |

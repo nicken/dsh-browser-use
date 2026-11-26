@@ -10,9 +10,9 @@ browser** and in **what the model sees**.
 
 | Form | What is installed | Model-visible tools | Browser runs in |
 |---|---|---|---|
-| **A. Plugin only** | `dsh-browser-use` (DSH plugin) | `browser_*` (6 tools, or 1 with the proposed unified surface) | Local Edge/Chrome on the DSH host |
+| **A. Plugin only** | `dsh-browser-use` (DSH plugin) | `browser` (1 facade tool; the 6 granular `browser_*` tools behind the advanced switch) | Local Edge/Chrome on the DSH host |
 | **B. MCP only** | `browser-pods` (MCP server) | `mcp__browser-pods__*` (16 tools) | Container pod (Xvfb + Chromium) |
-| **C. Plugin + pods, integrated** | Both, plugin configured with the pod endpoint | `browser_*` only — the model never sees MCP tools | Local *or* pod, chosen per session |
+| **C. Plugin + pods, integrated** | Both; engine configured in the Browser tab (`engine.json`) or env | Same as A — the model never sees MCP tools | Local *or* pod, chosen per session |
 
 A and B work today. C is the interesting one: it gives the model **one browser object** while
 letting the operator choose isolation, live view and recording without changing the tool surface.

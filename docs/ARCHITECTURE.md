@@ -61,10 +61,14 @@ Inside `apply`:
 
 1. `ctx.inject(['connection'], …)` registers the three HTTP routes inside an effect, so they are
    torn down with the plugin.
-2. A second effect registers the six tools with `ctx.tools.register(def, { when })`. The `when`
-   predicate is `({ agent }) => browserUseEnabled(agent)`, i.e. the tools are invisible unless the
-   current Session's `browserUse` flag is `true` in `~/.dsh/capability-toggles.json`.
-3. A third effect owns the idle sweeper and closes every instance when the plugin is disposed.
+2. A second effect registers the tool surface with `ctx.tools.register(def, { when })`:
+   - the default surface is one `browser` facade tool (`action: open|observe|act|read|session|evidence`),
+     registered when the Session's `browserUse` flag is true and `browserUseAdvanced` is false;
+   - when `browserUseAdvanced` is true the six granular `browser_*` tools are registered instead.
+   Both flags live in `~/.dsh/capability-toggles.json`.
+3. A third effect owns the idle sweeper; every close path (tool, HTTP status route, idle sweep,
+   plugin disposal) goes through `closeInstanceAndPod`, so a pod session is archived instead of
+   leaking.
 
 Every tool definition carries a parameter schema (`additionalProperties: false`), an output schema
 (`additionalProperties: true`, `required: ['ok']`), a `render` function returning text for the model,
